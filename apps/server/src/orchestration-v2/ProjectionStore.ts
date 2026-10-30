@@ -1484,7 +1484,7 @@ export function threadShellFromProjection(
     ...(projection.thread.activeOrderKey === undefined
       ? {}
       : { activeOrderKey: projection.thread.activeOrderKey }),
-    taskDocumentId: projection.thread.taskDocumentId,
+    taskDocumentId: projection.thread.taskDocumentId ?? null,
     taskInitialization: taskThreadInitializationSummary(projection.thread.taskInitialization),
     lineage: projection.thread.lineage,
     forkedFrom: projection.thread.forkedFrom,
@@ -1768,7 +1768,7 @@ function shellFromState(input: {
     ...(input.state.thread.activeOrderKey === undefined
       ? {}
       : { activeOrderKey: input.state.thread.activeOrderKey }),
-    taskDocumentId: input.state.thread.taskDocumentId,
+    taskDocumentId: input.state.thread.taskDocumentId ?? null,
     taskInitialization: taskThreadInitializationSummary(input.state.thread.taskInitialization),
     lineage: input.state.thread.lineage,
     forkedFrom: input.state.thread.forkedFrom,

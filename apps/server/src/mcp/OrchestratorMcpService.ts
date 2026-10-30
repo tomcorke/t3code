@@ -807,7 +807,7 @@ function threadDetail(
     interactionMode: projection.thread.interactionMode,
     linkedPullRequest: projection.thread.linkedPullRequest ?? null,
     pullRequests: threadPullRequests(projection.thread.pullRequests),
-    taskDocumentId: projection.thread.taskDocumentId,
+    taskDocumentId: projection.thread.taskDocumentId ?? null,
     taskInitialization: taskThreadInitializationSummary(projection.thread.taskInitialization),
     titleRegeneration:
       projection.thread.titleRegeneration === undefined ||
