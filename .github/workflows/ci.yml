@@ -125,6 +125,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          fetch-depth: 2
           sparse-checkout: |
             /*
             !/.repos/
@@ -199,6 +200,12 @@ jobs:
           until test -s "$RUNNER_TEMP/typecheck-status"; do sleep 1; done
           cat "$RUNNER_TEMP/typecheck.log"
           exit "$(cat "$RUNNER_TEMP/typecheck-status")"
+
+      - name: Check changed files on Linux
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          CHECK_BASE: ${{ github.event.pull_request.base.sha }}
+        run: vp run check:changed "$CHECK_BASE"
 
   # Everything except `t3` (apps/server) and the web app, which has its own job
   # below. `--parallel` drops the package dependency ordering that `vp run`
