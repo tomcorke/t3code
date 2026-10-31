@@ -22,18 +22,19 @@ import { useAtomCommand } from "~/state/use-atom-command";
 export function TaskCreateDialog(props: {
   readonly environmentId: EnvironmentId;
   readonly taskDocumentId: TaskDocumentId;
+  readonly initial?: NewTaskPlan | undefined;
   readonly onClose: () => void;
   readonly onPlanned: (taskDocumentId: TaskDocumentId) => void;
 }) {
   const plan = useNewTaskStore((store) => store.plan);
-  const existing = useNewTaskStore((store) => store.byId[props.taskDocumentId]);
+  const existing = props.initial;
   const defaultFolder = useAtomCommand(taskDocumentEnvironment.defaultFolder, {
     reportFailure: false,
   });
   const [title, setTitle] = useState(existing?.title ?? "");
   const [description, setDescription] = useState(existing?.description ?? "");
-  const [folder, setFolder] = useState(
-    () => existing?.directory ?? readTaskFolder(props.environmentId) ?? "",
+  const [folder, setFolder] = useState(() =>
+    existing ? (existing.directory ?? "") : (readTaskFolder(props.environmentId) ?? ""),
   );
   const [enrich, setEnrich] = useState(existing?.enrich ?? true);
   const [managedFolder, setManagedFolder] = useState<string | null>(null);
@@ -87,11 +88,17 @@ export function TaskCreateDialog(props: {
             <div className="flex flex-col gap-3">
               <label className="flex flex-col gap-1 text-sm">
                 Title
-                <Input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} />
+                <Input
+                  autoFocus
+                  maxLength={200}
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                />
               </label>
               <label className="flex flex-col gap-1 text-sm">
                 Description
                 <Textarea
+                  maxLength={20_000}
                   value={description}
                   placeholder="Kept word for word in the task file"
                   onChange={(event) => setDescription(event.target.value)}

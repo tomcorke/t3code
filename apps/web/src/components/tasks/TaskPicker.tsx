@@ -35,8 +35,8 @@ export function TaskPicker(props: {
   );
   const forgetPlan = useNewTaskStore((store) => store.forget);
   const [dialog, setDialog] = useState<"import" | "instructions" | "create" | null>(null);
-  // A new task is minted the moment its dialog opens, so replanning keeps the id the draft already holds.
-  const [mintedId] = useState(() => TaskDocumentId.make(randomUUID()));
+  // Every dialog gets a fresh id: a send may already have made the file for the old one, and create is idempotent per id.
+  const [mintedId, setMintedId] = useState(() => TaskDocumentId.make(randomUUID()));
   if (!available) return null;
   const select = (taskDocumentId: TaskDocumentId | null) => {
     if (props.taskDocumentId !== null && props.taskDocumentId !== taskDocumentId)
@@ -99,7 +99,14 @@ export function TaskPicker(props: {
             <MenuItem onClick={() => setDialog("import")}>Import task file…</MenuItem>
           ) : null}
           {canCreate ? (
-            <MenuItem onClick={() => setDialog("create")}>Create new task…</MenuItem>
+            <MenuItem
+              onClick={() => {
+                setMintedId(TaskDocumentId.make(randomUUID()));
+                setDialog("create");
+              }}
+            >
+              Create new task…
+            </MenuItem>
           ) : null}
           <MenuItem onClick={() => setDialog("instructions")}>Update instructions file…</MenuItem>
         </MenuPopup>
@@ -107,9 +114,8 @@ export function TaskPicker(props: {
       {dialog === "create" ? (
         <TaskCreateDialog
           environmentId={props.environmentId}
-          taskDocumentId={
-            planned && props.taskDocumentId !== null ? props.taskDocumentId : mintedId
-          }
+          taskDocumentId={mintedId}
+          initial={planned}
           onClose={() => setDialog(null)}
           onPlanned={select}
         />

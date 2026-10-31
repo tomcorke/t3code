@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -410,7 +411,10 @@ const make = Effect.gen(function* () {
       );
       if (!written) continue;
       return yield* registerFile({ path: created }).pipe(
-        Effect.tapError(() => fs.remove(created).pipe(Effect.ignore)),
+        // onExit, not tapError: an interrupted request must not leave an unregistered file carrying the id.
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit) ? Effect.void : fs.remove(created).pipe(Effect.ignore),
+        ),
       );
     }
     return yield* new TaskDocumentError({ reason: "io" });
