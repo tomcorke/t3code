@@ -412,8 +412,18 @@ const make = Effect.gen(function* () {
       if (!written) continue;
       return yield* registerFile({ path: created }).pipe(
         // onExit, not tapError: an interrupted request must not leave an unregistered file carrying the id.
+        // A row that already exists owns the file, so a later retry finds it instead of a missing one.
         Effect.onExit((exit) =>
-          Exit.isSuccess(exit) ? Effect.void : fs.remove(created).pipe(Effect.ignore),
+          Exit.isSuccess(exit)
+            ? Effect.void
+            : rows().pipe(
+                Effect.flatMap((all) =>
+                  all.some((row) => row.taskDocumentId === input.taskDocumentId)
+                    ? Effect.void
+                    : fs.remove(created),
+                ),
+                Effect.ignore,
+              ),
         ),
       );
     }
