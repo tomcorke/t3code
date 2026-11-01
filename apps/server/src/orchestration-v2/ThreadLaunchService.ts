@@ -906,6 +906,15 @@ const make = Effect.gen(function* () {
               threadId: priorThread.id,
               retryTaskInitialization: true,
             };
+          } else if (initialization.attemptId !== input.commandId) {
+            // A prior retry may have been accepted even if its launch reply was lost.
+            // Continue with that persisted attempt instead of replaying the original create.
+            input = {
+              ...input,
+              commandId: initialization.attemptId,
+              threadId: priorThread.id,
+              retryTaskInitialization: true,
+            };
           }
         }
       } else if (input.task !== undefined && Option.isNone(launchReceipt)) {

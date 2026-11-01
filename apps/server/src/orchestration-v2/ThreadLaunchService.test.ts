@@ -460,6 +460,17 @@ it.effect("retries a rejected task starter on the existing thread with a fresh a
       (yield* receipts.getByCommandId(rejectedStarterCommandId)).pipe(Option.getOrThrow).status,
       "rejected",
     );
+    const replayed = yield* launches.launch({
+      ...input,
+      task: { taskDocumentId, updateInstructionsPath: "/tasks/update.md" },
+    });
+    assert.equal(replayed.threadId, input.threadId);
+    assert.equal(
+      replayed.projection.thread.taskInitialization?.attemptId,
+      retried.projection.thread.taskInitialization?.attemptId,
+    );
+    assert.equal(replayed.projection.messages.length, 1);
+    assert.equal(replayed.projection.runs.length, 1);
     assert.equal(
       (yield* threads.listProjectThreads({ projectId, includeSubagents: false })).length,
       1,
