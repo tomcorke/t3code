@@ -1,6 +1,6 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
-import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts";
+import type { ChatAttachment, CommandId, OrchestrationV2Command } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
@@ -27,6 +27,19 @@ export function dispatchWasNotAccepted(error: { readonly _tag: string }) {
     default:
       return false;
   }
+}
+
+export function dispatchCommandWasNotAccepted(
+  threads: Pick<ThreadManagement.ThreadManagementService["Service"], "getCommandReceiptStatus">,
+  commandId: CommandId,
+  error: { readonly _tag: string },
+) {
+  if (error._tag !== "OrchestratorProjectionError")
+    return Effect.succeed(dispatchWasNotAccepted(error));
+  return threads.getCommandReceiptStatus(commandId).pipe(
+    Effect.map((status) => status === "rejected"),
+    Effect.orElseSucceed(() => false),
+  );
 }
 
 const isOrchestratorError = Schema.is(Orchestrator.OrchestratorV2Error);

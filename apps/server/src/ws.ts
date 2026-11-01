@@ -1903,17 +1903,25 @@ export const layerWsRpc = (
                     result.replayed ? Effect.void : recordClientCommandAnalytics(command),
                   ),
                   Effect.map((result) => ({ sequence: result.sequence })),
-                  Effect.mapError((cause) => {
-                    const detail = userFacingDispatchErrorMessage(cause);
-                    return new OrchestrationV2DispatchCommandError({
-                      commandId: command.commandId,
-                      commandType: command.type,
-                      message: detail ?? "Failed to dispatch orchestration V2 command",
-                      commandNotAccepted: ThreadMessageIntake.dispatchWasNotAccepted(cause),
-                      ...(detail === undefined ? {} : { detail }),
-                      cause,
-                    });
-                  }),
+                  Effect.catch((cause) =>
+                    Effect.gen(function* () {
+                      const commandNotAccepted =
+                        yield* ThreadMessageIntake.dispatchCommandWasNotAccepted(
+                          threadManagement,
+                          command.commandId,
+                          cause,
+                        );
+                      const detail = userFacingDispatchErrorMessage(cause);
+                      return yield* new OrchestrationV2DispatchCommandError({
+                        commandId: command.commandId,
+                        commandType: command.type,
+                        message: detail ?? "Failed to dispatch orchestration V2 command",
+                        commandNotAccepted,
+                        ...(detail === undefined ? {} : { detail }),
+                        cause,
+                      });
+                    }),
+                  ),
                 ),
             ),
           ),

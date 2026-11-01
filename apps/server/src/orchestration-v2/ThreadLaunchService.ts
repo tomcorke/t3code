@@ -867,14 +867,47 @@ const make = Effect.gen(function* () {
               .getThreadShell(priorThreadId)
               .pipe(Effect.mapError(mapError(input, "read-receipt", priorThreadId)));
       let initialization: TaskThreadInitializationEnvelope | undefined;
-      if (
+      const isAcceptedLaunchReceipt =
         Option.isSome(launchReceipt) &&
-        priorThread?.taskInitialization?.attemptId === input.commandId
+        launchReceipt.value.status === "accepted" &&
+        (launchReceipt.value.commandType === "thread.create" ||
+          launchReceipt.value.commandType === "thread.metadata.update") &&
+        (input.threadId === undefined || launchReceipt.value.threadId === input.threadId);
+      if (
+        isAcceptedLaunchReceipt &&
+        priorThread?.taskInitialization !== null &&
+        priorThread?.taskInitialization !== undefined &&
+        (priorThread.taskInitialization.attemptId === input.commandId ||
+          input.task?.taskDocumentId === priorThread.taskDocumentId)
       ) {
         const { thread } = yield* threads
           .getThreadRecords(priorThread.id, [])
           .pipe(Effect.mapError(mapError(input, "read-receipt", priorThread.id)));
         initialization = thread.taskInitialization ?? undefined;
+        if (
+          initialization !== undefined &&
+          input.task?.taskDocumentId === priorThread.taskDocumentId
+        ) {
+          const starterReceipt = yield* readReceipt(
+            input,
+            CommandId.make(`${initialization.attemptId}:initial-message`),
+          );
+          if (Option.isSome(starterReceipt) && starterReceipt.value.status === "rejected") {
+            const previousAttemptId = initialization.attemptId;
+            const retryCommandId = CommandId.make(`${previousAttemptId}:starter-retry`);
+            initialization = {
+              ...initialization,
+              attemptId: retryCommandId,
+              messageId: MessageIdSchema.make(`${retryCommandId}:task-initialization`),
+            };
+            input = {
+              ...input,
+              commandId: retryCommandId,
+              threadId: priorThread.id,
+              retryTaskInitialization: true,
+            };
+          }
+        }
       } else if (input.task !== undefined && Option.isNone(launchReceipt)) {
         const task = input.task;
         const provider = (yield* providerRegistry.getProviders).find(
@@ -1145,7 +1178,9 @@ const make = Effect.gen(function* () {
         let messageSequence: number | undefined;
         let messageWasAlreadyAccepted = false;
         if (input.initialMessage !== undefined) {
-          const messageCommandId = CommandId.make(`${input.commandId}:initial-message`);
+          const messageCommandId = CommandId.make(
+            `${initialization?.attemptId ?? input.commandId}:initial-message`,
+          );
           const messageReceipt = yield* readReceipt(input, messageCommandId);
           messageWasAlreadyAccepted = Option.isSome(messageReceipt);
           const messageId =

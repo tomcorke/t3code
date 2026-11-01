@@ -29,13 +29,20 @@ import {
 } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import {
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorDispatchError,
+  OrchestratorProjectionError,
 } from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
-import { dispatchCommand, launchCommandWasNotAccepted } from "./ThreadMessageIntake.ts";
+import {
+  dispatchCommand,
+  dispatchCommandWasNotAccepted,
+  dispatchWasNotAccepted,
+  launchCommandWasNotAccepted,
+} from "./ThreadMessageIntake.ts";
 
 const layerIntakeTest = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-question-intake-",
@@ -102,6 +109,39 @@ it("identifies task launch failures that prove the command was not accepted", ()
     ),
   ).toBe(false);
 });
+
+it.effect("checks receipts before treating a projection failure as an unaccepted command", () =>
+  Effect.gen(function* () {
+    const commandId = CommandId.make("projection-receipt-check");
+    const projectionError = new OrchestratorProjectionError({
+      threadId: ThreadId.make("projection-receipt-thread"),
+    });
+    const withStatus = (status: "accepted" | "rejected" | "unknown") => ({
+      getCommandReceiptStatus: () => Effect.succeed(status),
+    });
+
+    expect(dispatchWasNotAccepted(projectionError)).toBe(true);
+    expect(
+      yield* dispatchCommandWasNotAccepted(withStatus("accepted"), commandId, projectionError),
+    ).toBe(false);
+    expect(
+      yield* dispatchCommandWasNotAccepted(withStatus("rejected"), commandId, projectionError),
+    ).toBe(true);
+    expect(
+      yield* dispatchCommandWasNotAccepted(withStatus("unknown"), commandId, projectionError),
+    ).toBe(false);
+    expect(
+      yield* dispatchCommandWasNotAccepted(
+        {
+          getCommandReceiptStatus: () =>
+            Effect.fail(new CommandReceiptStore.CommandReceiptStoreReadError({ commandId })),
+        },
+        commandId,
+        projectionError,
+      ),
+    ).toBe(false);
+  }),
+);
 
 const answeredRespondEvents = (input: {
   readonly threadId: ThreadId;

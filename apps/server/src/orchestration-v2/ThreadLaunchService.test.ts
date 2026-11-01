@@ -287,6 +287,7 @@ function makeHarness(options: HarnessOptions = {}) {
       layerTitleRegeneration,
       layerOutbox,
       layerDatabase,
+      layerReceipts,
       layerExternalServices,
     ),
     createWorktree,
@@ -392,6 +393,77 @@ it.effect("keeps task work queued across the create-to-starter gap", () => {
       })
       .pipe(Effect.flip);
     assert.equal(stoppedStarter._tag, "OrchestratorDispatchError");
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("retries a rejected task starter on the existing thread with a fresh attempt", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+    const input = launchInput({
+      command: "task:rejected-starter",
+      thread: "thread:rejected-starter",
+    });
+    const taskDocumentId = TaskDocumentId.make("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    const initialization = {
+      attemptId: input.commandId,
+      messageId: MessageId.make(`${input.commandId}:task-initialization`),
+      canonicalPath: "/tasks/context.md",
+      revision: "a".repeat(64),
+      templateVersion: 1,
+      text: "Read the task and wait.",
+      workspaceStrategy: input.workspaceStrategy,
+      modelSelection,
+      runtimeMode: input.runtimeMode,
+      interactionMode: input.interactionMode,
+      title: input.title,
+    };
+    yield* threads.dispatch({
+      type: "thread.create",
+      commandId: input.commandId,
+      threadId: input.threadId,
+      projectId: input.projectId,
+      taskDocumentId,
+      taskInitialization: initialization,
+      title: input.title,
+      modelSelection,
+      runtimeMode: input.runtimeMode,
+      interactionMode: input.interactionMode,
+      branch: null,
+      worktreePath: null,
+      createdBy: input.createdBy,
+      creationSource: input.creationSource,
+    });
+    const rejectedStarterCommandId = CommandId.make(`${input.commandId}:initial-message`);
+    yield* receipts.upsert({
+      commandId: rejectedStarterCommandId,
+      threadId: input.threadId,
+      commandType: "task-initialization.start",
+      acceptedAt: DateTime.makeUnsafe("2026-06-20T00:00:00.000Z"),
+      resultSequence: 1,
+      status: "rejected",
+      error: "starter was rejected",
+    });
+
+    const retried = yield* launches.launch({
+      ...input,
+      task: { taskDocumentId, updateInstructionsPath: "/tasks/update.md" },
+    });
+
+    assert.equal(retried.threadId, input.threadId);
+    assert.notEqual(retried.projection.thread.taskInitialization?.attemptId, input.commandId);
+    assert.equal(retried.projection.messages.length, 1);
+    assert.equal(retried.projection.runs.length, 1);
+    assert.equal(
+      (yield* receipts.getByCommandId(rejectedStarterCommandId)).pipe(Option.getOrThrow).status,
+      "rejected",
+    );
+    assert.equal(
+      (yield* threads.listProjectThreads({ projectId, includeSubagents: false })).length,
+      1,
+    );
   }).pipe(Effect.provide(harness.layer));
 });
 
