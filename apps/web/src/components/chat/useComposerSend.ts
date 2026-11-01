@@ -17,6 +17,7 @@ import {
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import {
   AuthOrchestrationOperateScope,
+  CommandId,
   DEFAULT_MODEL,
   type EnvironmentId,
   type ModelSelection,
@@ -26,7 +27,11 @@ import {
   RuntimeMode,
 } from "@t3tools/contracts";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
-import { wasBootstrapThreadDeleted } from "@t3tools/client-runtime/errors";
+import {
+  wasBootstrapThreadDeleted,
+  wasTaskLaunchCommandNotAccepted,
+  wasTaskWorkCommandNotAccepted,
+} from "@t3tools/client-runtime/errors";
 import {
   declinePendingApprovals,
   sendApprovalFeedback,
@@ -1323,6 +1328,10 @@ export function useComposerSend(input: ComposerSendInput) {
       // A task launch is two calls; its starter's run must not promote the draft before the second.
       else if (sentDraftThreadRef && draftTaskDocumentId !== null)
         beginBackgroundDraftSubmissionByRef(sentDraftThreadRef);
+      const taskWorkCommandId =
+        draftId === null
+          ? null
+          : (useComposerDraftStore.getState().getDraftSession(draftId)?.taskWorkCommandId ?? null);
       const startPromise = startThreadTurn({
         environmentId,
         input: {
@@ -1344,6 +1353,7 @@ export function useComposerSend(input: ComposerSendInput) {
           interactionMode: sendInteractionMode,
           dispatchMode: turnDispatchMode,
           ...(bootstrap ? { bootstrap } : {}),
+          ...(draftTaskDocumentId !== null && taskWorkCommandId ? { taskWorkCommandId } : {}),
           createdAt: messageCreatedAt,
         },
       });
@@ -1420,12 +1430,23 @@ export function useComposerSend(input: ComposerSendInput) {
 
     if (failure !== null) {
       if (isLocalDraftThread && draftId && draftThread) {
+        const error = squashAtomCommandFailure(failure);
+        const taskLaunchRejected =
+          draftTaskDocumentId !== null && wasTaskLaunchCommandNotAccepted(error);
+        const taskWorkRejected =
+          draftTaskDocumentId !== null && wasTaskWorkCommandNotAccepted(error);
+        const retryTaskWorkCommandId = taskWorkRejected
+          ? CommandId.make(`${threadIdForSend}:task-work:${newThreadId()}`)
+          : taskLaunchRejected
+            ? null
+            : undefined;
         restoreFailedDraftThread(
           draftId,
           draftThread,
-          wasBootstrapThreadDeleted(squashAtomCommandFailure(failure))
-            ? newThreadId()
-            : threadIdForSend,
+          taskLaunchRejected || wasBootstrapThreadDeleted(error) ? newThreadId() : threadIdForSend,
+          retryTaskWorkCommandId === undefined
+            ? undefined
+            : { taskWorkCommandId: retryTaskWorkCommandId },
         );
         clearBackgroundDraftSubmissionByRef(scopeThreadRef(environmentId, threadIdForSend));
       }

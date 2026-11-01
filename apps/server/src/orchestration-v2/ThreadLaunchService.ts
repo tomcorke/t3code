@@ -56,6 +56,7 @@ import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as Orchestrator from "./Orchestrator.ts";
+import { OrchestratorCommandIdConflictError } from "./Orchestrator.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
@@ -155,6 +156,7 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
     projectId: ProjectId,
     threadId: Schema.optional(ThreadId),
     cause: Schema.Defect(),
+    commandNotAccepted: Schema.optional(Schema.Boolean),
   },
 ) {
   override get message(): string {
@@ -207,6 +209,7 @@ export class ThreadLaunchService extends Context.Service<
 >()("t3/orchestration-v2/ThreadLaunchService") {}
 
 const isThreadLaunchError = Schema.is(ThreadLaunchError);
+const isOrchestratorCommandIdConflictError = Schema.is(OrchestratorCommandIdConflictError);
 
 function failureDetail(error: unknown): string {
   if (isThreadLaunchError(error)) {
@@ -1276,6 +1279,37 @@ const make = Effect.gen(function* () {
         };
       });
     },
+    Effect.catchTags({
+      ThreadLaunchError: (error) =>
+        receipts.getByCommandId(error.commandId).pipe(
+          Effect.match({
+            onFailure: () => false,
+            onSuccess: (receipt) => {
+              if (Option.isNone(receipt)) return false;
+              if (receipt.value.status === "rejected") return true;
+              if (!isOrchestratorCommandIdConflictError(error.cause)) return false;
+              return (
+                receipt.value.commandType !== error.cause.commandType ||
+                receipt.value.threadId !== error.cause.commandThreadId
+              );
+            },
+          }),
+          Effect.flatMap((commandNotAccepted) =>
+            commandNotAccepted
+              ? Effect.fail(
+                  new ThreadLaunchError({
+                    operation: error.operation,
+                    commandId: error.commandId,
+                    projectId: error.projectId,
+                    ...(error.threadId === undefined ? {} : { threadId: error.threadId }),
+                    cause: error.cause,
+                    commandNotAccepted: true,
+                  }),
+                )
+              : Effect.fail(error),
+          ),
+        ),
+    }),
   );
 
   const prepareRun: ThreadLaunchService["Service"]["prepareRun"] = Effect.fn(

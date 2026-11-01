@@ -2202,6 +2202,7 @@ it.effect("rejects a server-allocated launch replay with a mismatching thread id
       assert.fail(`expected ThreadLaunchError, got ${failed._tag}`);
     }
     assert.equal(failed.operation, "create-thread");
+    assert.equal(failed.commandNotAccepted, true);
     assert.include(String(failed.cause), "cannot be replayed");
   }).pipe(Effect.provide(harness.layer));
 });
@@ -2242,6 +2243,7 @@ it.effect("does not treat an unrelated accepted command receipt as a launch", ()
       assert.fail(`expected ThreadLaunchError, got ${failed._tag}`);
     }
     assert.equal(failed.operation, "create-thread");
+    assert.equal(failed.commandNotAccepted, true);
     assert.include(String(failed.cause), "cannot be replayed");
     const projection = yield* threads.getThreadProjection(threadId);
     assert.equal(projection.messages.length, 0);
@@ -2599,6 +2601,10 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       Effect.flip,
     );
     assert.equal(failed._tag, "ThreadLaunchError");
+    if (failed._tag !== "ThreadLaunchError") {
+      assert.fail(`expected ThreadLaunchError, got ${failed._tag}`);
+    }
+    assert.isFalse(ThreadMessageIntake.launchCommandWasNotAccepted(failed));
     const accepted = yield* threads.getThreadProjection(input.threadId);
     const stored = accepted.messages.find(
       (message) => message.id === input.initialMessage.messageId,
@@ -2637,6 +2643,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     assert.ok(Result.isFailure(duplicate));
     assert.ok(duplicate.failure._tag === "ThreadLaunchError");
     assert.equal(duplicate.failure.operation, "create-thread");
+    assert.isTrue(duplicate.failure.commandNotAccepted);
     assert.propertyVal(duplicate.failure.cause, "_tag", "OrchestratorThreadAlreadyExistsError");
     assert.equal((yield* claimedFiles).length, 1);
     assert.deepEqual(yield* fs.readFile(storedPath), new Uint8Array([1, 2, 3, 4]));
@@ -2648,6 +2655,10 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       projectId: ProjectId.make("missing-project"),
     }).pipe(Effect.flip);
     assert.equal(missingProject._tag, "ThreadLaunchError");
+    if (missingProject._tag !== "ThreadLaunchError") {
+      assert.fail(`expected ThreadLaunchError, got ${missingProject._tag}`);
+    }
+    assert.isFalse(ThreadMessageIntake.launchCommandWasNotAccepted(missingProject));
     assert.equal((yield* claimedFiles).length, 1);
     const missingThread = yield* ThreadMessageIntake.dispatchCommand({
       type: "message.dispatch",

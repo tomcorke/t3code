@@ -1,4 +1,10 @@
-import { MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  MessageId,
+  ProjectId,
+  ThreadId,
+  type CommandId,
+  type TaskDocumentId,
+} from "@t3tools/contracts";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
 import { type CxOptions, cx } from "class-variance-authority";
 import * as Hex from "effect/encoding/Hex";
@@ -49,6 +55,20 @@ export function randomUUID(): string {
 export const newProjectId = (): ProjectId => ProjectId.make(randomUUID());
 
 export const newThreadId = (): ThreadId => ThreadId.make(randomUUID());
+
+export function taskChangeRetryIdentity(
+  currentTaskDocumentId: TaskDocumentId | null | undefined,
+  taskWorkCommandId: CommandId | null | undefined,
+  nextTaskDocumentId: TaskDocumentId | null | undefined,
+) {
+  if (
+    taskWorkCommandId == null ||
+    (currentTaskDocumentId ?? null) === (nextTaskDocumentId ?? null)
+  ) {
+    return undefined;
+  }
+  return { threadId: newThreadId(), taskWorkCommandId: null };
+}
 
 export const newDraftId = (): DraftId => DraftId.make(randomUUID());
 

@@ -1909,6 +1909,7 @@ export const layerWsRpc = (
                       commandId: command.commandId,
                       commandType: command.type,
                       message: detail ?? "Failed to dispatch orchestration V2 command",
+                      commandNotAccepted: ThreadMessageIntake.dispatchWasNotAccepted(cause),
                       ...(detail === undefined ? {} : { detail }),
                       cause,
                     });
@@ -2109,6 +2110,7 @@ export const layerWsRpc = (
                         commandId: input.commandId,
                         projectId: input.projectId,
                         message: "Failed to launch thread",
+                        commandNotAccepted: ThreadMessageIntake.launchCommandWasNotAccepted(cause),
                         cause,
                       }),
                     ServerRuntimeStartupError: (cause) =>

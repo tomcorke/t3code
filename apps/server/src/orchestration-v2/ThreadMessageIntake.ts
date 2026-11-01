@@ -12,9 +12,7 @@ import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 // These failures precede commitCommand; generic dispatch errors can follow commits and remain ambiguous.
-function dispatchWasNotAccepted(
-  error: Orchestrator.OrchestratorV2Error | ThreadManagement.ThreadManagementError,
-) {
+export function dispatchWasNotAccepted(error: { readonly _tag: string }) {
   switch (error._tag) {
     case "OrchestratorCommandRejectedError":
     case "OrchestratorThreadAlreadyExistsError":
@@ -30,8 +28,23 @@ function dispatchWasNotAccepted(
       return false;
   }
 }
+
 const isOrchestratorError = Schema.is(Orchestrator.OrchestratorV2Error);
 const isThreadManagementError = Schema.is(ThreadManagement.ThreadManagementError);
+
+export function launchCommandWasNotAccepted(error: ThreadLaunch.ThreadLaunchError): boolean {
+  return error.commandNotAccepted === true;
+}
+
+function launchFailureAllowsAttachmentRelease(error: ThreadLaunch.ThreadLaunchError): boolean {
+  if (error.operation === "resolve-project" || error.operation === "read-receipt") return true;
+  return (
+    (error.operation === "create-thread" || error.operation === "dispatch-message") &&
+    (isOrchestratorError(error.cause) || isThreadManagementError(error.cause)) &&
+    (error.operation !== "create-thread" || error.cause._tag !== "OrchestratorProjectionError") &&
+    dispatchWasNotAccepted(error.cause)
+  );
+}
 
 const releaseUnusedClaims = Effect.fn("ThreadMessageIntake.releaseUnusedClaims")(function* (
   claimedPaths: ReadonlyArray<string>,
@@ -252,17 +265,7 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
         if (error._tag === "ThreadManagementProviderInstanceDisabledError") {
           return AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths);
         }
-        // Project/receipt reads precede dispatch; create-thread errors can wrap post-message reads and prove nothing alone.
-        const notAccepted =
-          error.operation === "resolve-project" ||
-          error.operation === "read-receipt" ||
-          ((error.operation === "create-thread" || error.operation === "dispatch-message") &&
-            (isOrchestratorError(error.cause) || isThreadManagementError(error.cause)) &&
-            // Projection errors under create-thread can occur after the message commit.
-            (error.operation !== "create-thread" ||
-              error.cause._tag !== "OrchestratorProjectionError") &&
-            dispatchWasNotAccepted(error.cause));
-        return notAccepted
+        return launchFailureAllowsAttachmentRelease(error)
           ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
           : Effect.void;
       }),

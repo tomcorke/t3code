@@ -10,6 +10,7 @@ import {
   EventId,
   GuestMessageId,
   MessageId,
+  ProjectId,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
@@ -33,7 +34,8 @@ import {
   OrchestratorDispatchError,
 } from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import { dispatchCommand } from "./ThreadMessageIntake.ts";
+import * as ThreadLaunchService from "./ThreadLaunchService.ts";
+import { dispatchCommand, launchCommandWasNotAccepted } from "./ThreadMessageIntake.ts";
 
 const layerIntakeTest = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-question-intake-",
@@ -60,6 +62,46 @@ const layerFailingDispatch = (captured: OrchestrationV2ServerCommand[]) =>
   });
 
 const NOW = DateTime.makeUnsafe("2026-09-13T00:00:00.000Z");
+
+it("identifies task launch failures that prove the command was not accepted", () => {
+  const commandId = CommandId.make("task-launch");
+  const projectId = ProjectId.make("project-task-launch");
+  expect(
+    launchCommandWasNotAccepted(
+      new ThreadLaunchService.ThreadLaunchError({
+        operation: "dispatch-message",
+        commandId,
+        projectId,
+        cause: new Error("launch receipt is rejected"),
+        commandNotAccepted: true,
+      }),
+    ),
+  ).toBe(true);
+  expect(
+    launchCommandWasNotAccepted(
+      new ThreadLaunchService.ThreadLaunchError({
+        operation: "dispatch-message",
+        commandId,
+        projectId,
+        cause: new Error("connection lost"),
+      }),
+    ),
+  ).toBe(false);
+  expect(
+    launchCommandWasNotAccepted(
+      new ThreadLaunchService.ThreadLaunchError({
+        operation: "read-receipt",
+        commandId,
+        projectId,
+        cause: new OrchestratorCommandPreviouslyRejectedError({
+          commandId,
+          commandType: "thread.create",
+          detail: "rejected earlier",
+        }),
+      }),
+    ),
+  ).toBe(false);
+});
 
 const answeredRespondEvents = (input: {
   readonly threadId: ThreadId;
@@ -135,7 +177,7 @@ it.effect("claims question uploads and passes readable paths through the V2 requ
     expect(NodeFS.readFileSync(path!)).toEqual(Buffer.from([1, 2, 3]));
     expect(command.answers?.q).toEqual([
       "Selected option",
-      `Attached image "screen.png": "${path}"`,
+      `Attached image ${JSON.stringify("screen.png")}: ${JSON.stringify(path)}`,
     ]);
   }).pipe(Effect.provide(layerIntakeTest)),
 );

@@ -18,7 +18,7 @@ import {
   type DraftThreadState,
   useComposerDraftStore,
 } from "../composerDraftStore";
-import { newDraftId, newThreadId } from "../lib/utils";
+import { newDraftId, newThreadId, taskChangeRetryIdentity } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -320,10 +320,20 @@ export function createNewThreadHandler(router: AnyRouter) {
             ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
           },
         );
-        setDraftThreadContext(emptyStoredDraftThread.draftId, { taskDocumentId });
+        const retryIdentity = taskChangeRetryIdentity(
+          emptyStoredDraftThread.taskDocumentId,
+          emptyStoredDraftThread.taskWorkCommandId,
+          taskDocumentId,
+        );
+        setDraftThreadContext(emptyStoredDraftThread.draftId, {
+          taskDocumentId,
+          ...retryIdentity,
+        });
         const opened = {
           draftId: emptyStoredDraftThread.draftId,
-          threadId: emptyStoredDraftThread.threadId,
+          threadId:
+            getDraftSession(emptyStoredDraftThread.draftId)?.threadId ??
+            emptyStoredDraftThread.threadId,
         };
         seedPrompt(emptyStoredDraftThread.draftId);
         const routeTargetAfterWrites = getCurrentRouteTarget();
@@ -357,9 +367,15 @@ export function createNewThreadHandler(router: AnyRouter) {
       ) {
         setDraftThreadContext(currentRouteTarget.draftId, pickExplicitWorkspaceOptions(options));
       }
+      const retryIdentity = taskChangeRetryIdentity(
+        latestActiveDraftThread.taskDocumentId,
+        latestActiveDraftThread.taskWorkCommandId,
+        taskDocumentId,
+      );
       setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, currentRouteTarget.draftId, {
         threadId: latestActiveDraftThread.threadId,
-        createdAt: latestActiveDraftThread.createdAt,
+        ...retryIdentity,
+        createdAt: retryIdentity ? new Date().toISOString() : latestActiveDraftThread.createdAt,
         runtimeMode: latestActiveDraftThread.runtimeMode,
         interactionMode: latestActiveDraftThread.interactionMode,
         taskDocumentId,
@@ -368,7 +384,8 @@ export function createNewThreadHandler(router: AnyRouter) {
       seedPrompt(currentRouteTarget.draftId);
       return Promise.resolve({
         draftId: currentRouteTarget.draftId,
-        threadId: latestActiveDraftThread.threadId,
+        threadId:
+          getDraftSession(currentRouteTarget.draftId)?.threadId ?? latestActiveDraftThread.threadId,
       });
     }
 
@@ -387,9 +404,15 @@ export function createNewThreadHandler(router: AnyRouter) {
         racedDraft.draftId !== storedDraftThread?.draftId &&
         readThreadShell(scopeThreadRef(racedDraft.environmentId, racedDraft.threadId)) === null
       ) {
+        const retryIdentity = taskChangeRetryIdentity(
+          racedDraft.taskDocumentId,
+          racedDraft.taskWorkCommandId,
+          taskDocumentId,
+        );
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, racedDraft.draftId, {
-          threadId: racedDraft.threadId,
-          createdAt: racedDraft.createdAt,
+          threadId: retryIdentity?.threadId ?? racedDraft.threadId,
+          ...retryIdentity,
+          createdAt: retryIdentity ? new Date().toISOString() : racedDraft.createdAt,
           runtimeMode: racedDraft.runtimeMode,
           interactionMode: racedDraft.interactionMode,
           taskDocumentId,
@@ -401,7 +424,13 @@ export function createNewThreadHandler(router: AnyRouter) {
           params: { draftId: racedDraft.draftId },
           replace: options?.replace ?? false,
         });
-        return { draftId: racedDraft.draftId, threadId: racedDraft.threadId };
+        return {
+          draftId: racedDraft.draftId,
+          threadId:
+            getDraftSession(racedDraft.draftId)?.threadId ??
+            retryIdentity?.threadId ??
+            racedDraft.threadId,
+        };
       }
       setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
         threadId,
