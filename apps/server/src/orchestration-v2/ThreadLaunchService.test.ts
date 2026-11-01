@@ -126,6 +126,7 @@ const claudeAdapter = {
 interface HarnessOptions {
   readonly openTask?: TaskDocuments.TaskDocuments["Service"]["open"];
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
+  readonly idAllocator?: Layer.Layer<IdAllocator.IdAllocatorV2>;
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
@@ -248,7 +249,7 @@ function makeHarness(options: HarnessOptions = {}) {
         layerExternalServices,
         layerThreadManagement,
         layerReceipts,
-        IdAllocator.layer,
+        options.idAllocator ?? IdAllocator.layer,
       ),
     ),
   );
@@ -397,7 +398,25 @@ it.effect("keeps task work queued across the create-to-starter gap", () => {
 });
 
 it.effect("retries a rejected task starter on the existing thread with a fresh attempt", () => {
-  const harness = makeHarness();
+  const retryCommandIds = [
+    CommandId.make("task:rejected-starter:fresh-retry-rejected"),
+    CommandId.make("task:rejected-starter:fresh-retry-accepted"),
+  ] as const;
+  let retryCommandIndex = 0;
+  const idAllocator = Layer.effect(
+    IdAllocator.IdAllocatorV2,
+    Effect.gen(function* () {
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      return IdAllocator.IdAllocatorV2.of({
+        ...ids,
+        allocate: {
+          ...ids.allocate,
+          command: () => Effect.succeed(retryCommandIds[retryCommandIndex++] ?? retryCommandIds[1]),
+        },
+      });
+    }),
+  ).pipe(Layer.provide(IdAllocator.layer));
+  const harness = makeHarness({ idAllocator });
   return Effect.gen(function* () {
     const threads = yield* ThreadManagement.ThreadManagementService;
     const launches = yield* ThreadLaunch.ThreadLaunchService;
@@ -437,6 +456,8 @@ it.effect("retries a rejected task starter on the existing thread with a fresh a
       creationSource: input.creationSource,
     });
     const rejectedStarterCommandId = CommandId.make(`${input.commandId}:initial-message`);
+    const rejectedRetryCommandId = CommandId.make(`${input.commandId}:starter-retry`);
+    const rejectedFreshRetryCommandId = retryCommandIds[0];
     yield* receipts.upsert({
       commandId: rejectedStarterCommandId,
       threadId: input.threadId,
@@ -446,6 +467,37 @@ it.effect("retries a rejected task starter on the existing thread with a fresh a
       status: "rejected",
       error: "starter was rejected",
     });
+    yield* receipts.upsert({
+      commandId: rejectedRetryCommandId,
+      threadId: input.threadId,
+      commandType: "task-initialization.retry",
+      acceptedAt: DateTime.makeUnsafe("2026-06-20T00:00:00.000Z"),
+      resultSequence: 1,
+      status: "rejected",
+      error: "retry command was rejected",
+    });
+    yield* receipts.upsert({
+      commandId: rejectedFreshRetryCommandId,
+      threadId: input.threadId,
+      commandType: "task-initialization.retry",
+      acceptedAt: DateTime.makeUnsafe("2026-06-20T00:00:00.000Z"),
+      resultSequence: 1,
+      status: "rejected",
+      error: "fresh retry command was rejected",
+    });
+
+    const rejectedRetry = yield* launches
+      .launch({ ...input, task: { taskDocumentId, updateInstructionsPath: "/tasks/update.md" } })
+      .pipe(Effect.result);
+    assert.isTrue(Result.isFailure(rejectedRetry));
+    if (Result.isFailure(rejectedRetry)) {
+      assert.equal(rejectedRetry.failure._tag, "ThreadLaunchError");
+      if (rejectedRetry.failure._tag === "ThreadLaunchError") {
+        assert.equal(rejectedRetry.failure.commandId, rejectedFreshRetryCommandId);
+        assert.equal(rejectedRetry.failure.threadId, input.threadId);
+        assert.isFalse(ThreadMessageIntake.launchCommandWasNotAccepted(rejectedRetry.failure));
+      }
+    }
 
     const retried = yield* launches.launch({
       ...input,
@@ -454,10 +506,23 @@ it.effect("retries a rejected task starter on the existing thread with a fresh a
 
     assert.equal(retried.threadId, input.threadId);
     assert.notEqual(retried.projection.thread.taskInitialization?.attemptId, input.commandId);
+    assert.notEqual(
+      retried.projection.thread.taskInitialization?.attemptId,
+      rejectedRetryCommandId,
+    );
+    assert.equal(retried.projection.thread.taskInitialization?.attemptId, retryCommandIds[1]);
     assert.equal(retried.projection.messages.length, 1);
     assert.equal(retried.projection.runs.length, 1);
     assert.equal(
       (yield* receipts.getByCommandId(rejectedStarterCommandId)).pipe(Option.getOrThrow).status,
+      "rejected",
+    );
+    assert.equal(
+      (yield* receipts.getByCommandId(rejectedRetryCommandId)).pipe(Option.getOrThrow).status,
+      "rejected",
+    );
+    assert.equal(
+      (yield* receipts.getByCommandId(rejectedFreshRetryCommandId)).pipe(Option.getOrThrow).status,
       "rejected",
     );
     const replayed = yield* launches.launch({

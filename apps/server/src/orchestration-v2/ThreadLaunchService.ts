@@ -894,7 +894,13 @@ const make = Effect.gen(function* () {
           );
           if (Option.isSome(starterReceipt) && starterReceipt.value.status === "rejected") {
             const previousAttemptId = initialization.attemptId;
-            const retryCommandId = CommandId.make(`${previousAttemptId}:starter-retry`);
+            let retryCommandId = CommandId.make(`${previousAttemptId}:starter-retry`);
+            const retryReceipt = yield* readReceipt(input, retryCommandId);
+            if (Option.isSome(retryReceipt) && retryReceipt.value.status === "rejected") {
+              retryCommandId = yield* ids.allocate
+                .command({ fixtureName: "task-initialization", commandName: "starter-retry" })
+                .pipe(Effect.mapError(mapError(input, "resolve-task", priorThread.id)));
+            }
             initialization = {
               ...initialization,
               attemptId: retryCommandId,
@@ -1330,7 +1336,12 @@ const make = Effect.gen(function* () {
             onFailure: () => false,
             onSuccess: (receipt) => {
               if (Option.isNone(receipt)) return false;
-              if (receipt.value.status === "rejected") return true;
+              if (receipt.value.status === "rejected") {
+                return (
+                  receipt.value.commandType === "thread.create" ||
+                  receipt.value.commandType === "thread.metadata.update"
+                );
+              }
               if (!isOrchestratorCommandIdConflictError(error.cause)) return false;
               return (
                 receipt.value.commandType !== error.cause.commandType ||
