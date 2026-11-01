@@ -1,6 +1,6 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
-import type { ChatAttachment, CommandId, OrchestrationV2Command } from "@t3tools/contracts";
+import { CommandId, type ChatAttachment, type OrchestrationV2Command } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
@@ -16,7 +16,6 @@ export function dispatchWasNotAccepted(error: { readonly _tag: string }) {
   switch (error._tag) {
     case "OrchestratorCommandRejectedError":
     case "OrchestratorThreadAlreadyExistsError":
-    case "OrchestratorProjectionError":
     case "OrchestratorProviderAdapterError":
     case "OrchestratorCommandPreviouslyRejectedError":
     case "OrchestratorCommandIdConflictError":
@@ -49,14 +48,29 @@ export function launchCommandWasNotAccepted(error: ThreadLaunch.ThreadLaunchErro
   return error.commandNotAccepted === true;
 }
 
-function launchFailureAllowsAttachmentRelease(error: ThreadLaunch.ThreadLaunchError): boolean {
-  if (error.operation === "resolve-project" || error.operation === "read-receipt") return true;
-  return (
-    (error.operation === "create-thread" || error.operation === "dispatch-message") &&
-    (isOrchestratorError(error.cause) || isThreadManagementError(error.cause)) &&
-    (error.operation !== "create-thread" || error.cause._tag !== "OrchestratorProjectionError") &&
-    dispatchWasNotAccepted(error.cause)
-  );
+function launchFailureAllowsAttachmentRelease(
+  error: ThreadLaunch.ThreadLaunchError,
+  threads: ThreadManagement.ThreadManagementService["Service"],
+) {
+  if (error.operation === "resolve-project" || error.operation === "read-receipt") {
+    return threads.getCommandReceiptStatus(error.commandId).pipe(
+      Effect.map((status) => status === "rejected"),
+      Effect.orElseSucceed(() => false),
+    );
+  }
+  if (
+    (error.operation !== "create-thread" && error.operation !== "dispatch-message") ||
+    (!isOrchestratorError(error.cause) && !isThreadManagementError(error.cause))
+  ) {
+    return Effect.succeed(false);
+  }
+  const receiptCommandId =
+    error.operation === "dispatch-message" &&
+    isOrchestratorError(error.cause) &&
+    error.cause._tag === "OrchestratorProjectionError"
+      ? CommandId.make(`${error.commandId}:initial-message`)
+      : error.commandId;
+  return dispatchCommandWasNotAccepted(threads, receiptCommandId, error.cause);
 }
 
 const releaseUnusedClaims = Effect.fn("ThreadMessageIntake.releaseUnusedClaims")(function* (
@@ -171,9 +185,11 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
             : Effect.void;
         }),
         Effect.tapError((error) =>
-          dispatchWasNotAccepted(error)
-            ? AttachmentClaims.releaseClaimedAttachments(claimedPaths)
-            : Effect.void,
+          dispatchCommandWasNotAccepted(threads, command.commandId, error).pipe(
+            Effect.flatMap((notAccepted) =>
+              notAccepted ? AttachmentClaims.releaseClaimedAttachments(claimedPaths) : Effect.void,
+            ),
+          ),
         ),
       );
   }
@@ -210,9 +226,13 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
         ),
       ),
       Effect.tapError((error) =>
-        dispatchWasNotAccepted(error)
-          ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
-          : Effect.void,
+        dispatchCommandWasNotAccepted(threads, command.commandId, error).pipe(
+          Effect.flatMap((notAccepted) =>
+            notAccepted
+              ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
+              : Effect.void,
+          ),
+        ),
       ),
     );
 });
@@ -225,9 +245,13 @@ export const sendToThread = Effect.fn("ThreadMessageIntake.sendToThread")(functi
   return yield* threads.sendToThread({ ...input, attachments: claimed.attachments }).pipe(
     Effect.tap((result) => releaseUnusedClaims(claimed.claimedPaths, result.message.attachments)),
     Effect.tapError((error) =>
-      dispatchWasNotAccepted(error)
-        ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
-        : Effect.void,
+      dispatchCommandWasNotAccepted(threads, input.commandId, error).pipe(
+        Effect.flatMap((notAccepted) =>
+          notAccepted
+            ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
+            : Effect.void,
+        ),
+      ),
     ),
   );
 });
@@ -236,6 +260,7 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
   input: ThreadLaunch.ThreadLaunchInput,
 ) {
   const launches = yield* ThreadLaunch.ThreadLaunchService;
+  const threads = yield* ThreadManagement.ThreadManagementService;
   if (input.task !== undefined) return yield* launches.launch(input);
   yield* AttachmentClaims.validateAttachmentLimits(input.initialMessage?.attachments ?? []);
   if (!input.initialMessage?.attachments.some(AttachmentClaims.attachmentIsPendingUpload)) {
@@ -278,9 +303,13 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
         if (error._tag === "ThreadManagementProviderInstanceDisabledError") {
           return AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths);
         }
-        return launchFailureAllowsAttachmentRelease(error)
-          ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
-          : Effect.void;
+        return launchFailureAllowsAttachmentRelease(error, threads).pipe(
+          Effect.flatMap((mayRelease) =>
+            mayRelease
+              ? AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths)
+              : Effect.void,
+          ),
+        );
       }),
     );
 });

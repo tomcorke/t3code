@@ -2731,7 +2731,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       assert.fail(`expected ThreadLaunchError, got ${missingProject._tag}`);
     }
     assert.isFalse(ThreadMessageIntake.launchCommandWasNotAccepted(missingProject));
-    assert.equal((yield* claimedFiles).length, 1);
+    assert.equal((yield* claimedFiles).length, 2);
     const missingThread = yield* ThreadMessageIntake.dispatchCommand({
       type: "message.dispatch",
       commandId: CommandId.make("intake-no-thread"),
@@ -2744,7 +2744,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       creationSource: "web",
     }).pipe(Effect.flip);
     assert.equal(missingThread._tag, "OrchestratorProjectionError");
-    assert.equal((yield* claimedFiles).length, 1);
+    assert.equal((yield* claimedFiles).length, 3);
 
     const dispatch = ThreadMessageIntake.dispatchCommand({
       type: "message.dispatch",
@@ -2832,7 +2832,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     });
     yield* send;
     yield* send;
-    assert.equal((yield* claimedFiles).length, 4);
+    assert.equal((yield* claimedFiles).length, 6);
     const final = yield* threads.getThreadProjection(input.threadId);
     assert.equal(final.messages.length, 3);
     for (const message of final.messages) {

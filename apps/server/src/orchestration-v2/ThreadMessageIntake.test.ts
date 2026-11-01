@@ -120,7 +120,7 @@ it.effect("checks receipts before treating a projection failure as an unaccepted
       getCommandReceiptStatus: () => Effect.succeed(status),
     });
 
-    expect(dispatchWasNotAccepted(projectionError)).toBe(true);
+    expect(dispatchWasNotAccepted(projectionError)).toBe(false);
     expect(
       yield* dispatchCommandWasNotAccepted(withStatus("accepted"), commandId, projectionError),
     ).toBe(false);
