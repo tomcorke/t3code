@@ -322,7 +322,6 @@ export function createNewThreadHandler(router: AnyRouter) {
         );
         const retryIdentity = taskChangeRetryIdentity(
           emptyStoredDraftThread.taskDocumentId,
-          emptyStoredDraftThread.taskWorkCommandId,
           taskDocumentId,
         );
         setDraftThreadContext(emptyStoredDraftThread.draftId, {
@@ -369,7 +368,6 @@ export function createNewThreadHandler(router: AnyRouter) {
       }
       const retryIdentity = taskChangeRetryIdentity(
         latestActiveDraftThread.taskDocumentId,
-        latestActiveDraftThread.taskWorkCommandId,
         taskDocumentId,
       );
       setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, currentRouteTarget.draftId, {
@@ -404,11 +402,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         racedDraft.draftId !== storedDraftThread?.draftId &&
         readThreadShell(scopeThreadRef(racedDraft.environmentId, racedDraft.threadId)) === null
       ) {
-        const retryIdentity = taskChangeRetryIdentity(
-          racedDraft.taskDocumentId,
-          racedDraft.taskWorkCommandId,
-          taskDocumentId,
-        );
+        const retryIdentity = taskChangeRetryIdentity(racedDraft.taskDocumentId, taskDocumentId);
         setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, racedDraft.draftId, {
           threadId: retryIdentity?.threadId ?? racedDraft.threadId,
           ...retryIdentity,
