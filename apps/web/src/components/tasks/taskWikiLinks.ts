@@ -69,18 +69,13 @@ function nodeSourceRange(node: MarkdownNode): SourceRange | null {
   return start === undefined || end === undefined ? null : { start, end };
 }
 
-function findUnescapedSourceMatch(source: string, range: SourceRange, match: string, from: number) {
+function findSourceMatch(source: string, range: SourceRange, match: string, from: number) {
   const nodeSource = source.slice(range.start, range.end);
-  for (
-    let index = nodeSource.indexOf(match, from);
-    index >= 0;
-    index = nodeSource.indexOf(match, index + match.length)
-  ) {
-    let backslashes = 0;
-    for (let cursor = index - 1; nodeSource[cursor] === "\\"; cursor -= 1) backslashes += 1;
-    if (backslashes % 2 === 0) return range.start + index;
-  }
-  return null;
+  const index = nodeSource.indexOf(match, from);
+  if (index < 0) return null;
+  let backslashes = 0;
+  for (let cursor = index - 1; nodeSource[cursor] === "\\"; cursor -= 1) backslashes += 1;
+  return { index: range.start + index, escaped: backslashes % 2 !== 0 };
 }
 
 function markdownLineStarts(markdown: string) {
@@ -152,15 +147,11 @@ function replaceWikiLinks(
 
     for (const match of node.value.matchAll(pattern)) {
       const index = match.index;
-      const sourceIndex = findUnescapedSourceMatch(
-        markdownSource,
-        searchRange,
-        match[0],
-        sourceCursor,
-      );
-      if (sourceIndex === null) continue;
-      sourceCursor = sourceIndex - searchRange.start + match[0].length;
-      if (node.value[index - 1] === "!") continue;
+      const sourceMatch = findSourceMatch(markdownSource, searchRange, match[0], sourceCursor);
+      if (sourceMatch === null) continue;
+      sourceCursor = sourceMatch.index - searchRange.start + match[0].length;
+      if (sourceMatch.escaped || node.value[index - 1] === "!") continue;
+      const sourceIndex = sourceMatch.index;
       const task = resolveTask(match[1] ?? "", tasks);
       if (task === null) continue;
 

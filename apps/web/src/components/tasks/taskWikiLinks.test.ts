@@ -12,6 +12,7 @@ type Node = {
   value?: string;
   url?: string;
   children?: Node[];
+  position?: { start?: { offset?: number }; end?: { offset?: number } };
 };
 
 const environmentId = EnvironmentId.make("test-environment");
@@ -126,6 +127,16 @@ it("leaves unknown, ambiguous, code, nested, embed, raw HTML, and escaped syntax
   expect(links(renderTree("\\[\\[Parent decision\\]\\] and [[Parent decision]]"))).toEqual([
     { url: `/task/test-environment/${parentId}`, label: "Parent decision" },
   ]);
+});
+
+it("keeps an escaped wikilink literal when followed by the same real wikilink", () => {
+  const markdown = String.raw`\[[Parent decision]] and [[Parent decision]]`;
+  const tree = renderTree(markdown);
+  const children = tree.children?.[0]?.children ?? [];
+
+  expect(children.map((child) => child.type)).toEqual(["text", "link"]);
+  expect(children[0]?.value).toBe("[[Parent decision]] and ");
+  expect(children[1]?.position?.start?.offset).toBe(markdown.lastIndexOf("[[Parent decision]]"));
 });
 
 it("resolves relative paths using host path case rules", () => {
