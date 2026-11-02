@@ -1,0 +1,241 @@
+import { EnvironmentId, TaskDocumentId } from "@t3tools/contracts";
+import { remarkNormalizeListItemIndentation } from "@t3tools/shared/markdownListIndentation";
+import { expect, it } from "vite-plus/test";
+import type { Root } from "mdast";
+import remarkParse from "remark-parse";
+import { type Plugin, unified } from "unified";
+
+import { taskWikiLinkIdFromNode, remarkTaskWikiLinks } from "./taskWikiLinks";
+
+type Node = {
+  type: string;
+  value?: string;
+  url?: string;
+  data?: unknown;
+  children?: Node[];
+  position?: { start?: { offset?: number }; end?: { offset?: number } };
+};
+type TaskTarget = {
+  canonicalPath: string;
+  taskDocumentId: TaskDocumentId;
+  title: string;
+  registered: boolean;
+};
+
+const environmentId = EnvironmentId.make("test-environment");
+const parentId = TaskDocumentId.make("18000000-0000-4000-8000-000000000001");
+const duplicateId = TaskDocumentId.make("18000000-0000-4000-8000-000000000002");
+const readmeId = TaskDocumentId.make("18000000-0000-4000-8000-000000000003");
+const windowsId = TaskDocumentId.make("18000000-0000-4000-8000-000000000004");
+
+const parent: TaskTarget = {
+  canonicalPath: "/vault/tasks/Parent decision.md",
+  taskDocumentId: parentId,
+  title: "Parent decision",
+  registered: true,
+};
+const duplicate: TaskTarget = {
+  canonicalPath: "/vault/other/Parent decision.md",
+  taskDocumentId: duplicateId,
+  title: "Parent decision",
+  registered: true,
+};
+const readme: TaskTarget = {
+  canonicalPath: "/vault/tasks/Readme.md",
+  taskDocumentId: readmeId,
+  title: "Readme",
+  registered: true,
+};
+const windowsTask: TaskTarget = {
+  canonicalPath: "C:\\vault\\tasks\\Windows item.md",
+  taskDocumentId: windowsId,
+  title: "Windows item",
+  registered: true,
+};
+const unregistered: TaskTarget = {
+  canonicalPath: "/vault/tasks/Unregistered.md",
+  taskDocumentId: TaskDocumentId.make("18000000-0000-4000-8000-000000000005"),
+  title: "Unregistered",
+  registered: false,
+};
+
+function renderTree(
+  markdown: string,
+  taskTargets: ReadonlyArray<TaskTarget> = [parent],
+  normalizeLists = false,
+) {
+  const processor = unified().use(remarkParse);
+  if (normalizeLists) {
+    processor.use(remarkNormalizeListItemIndentation as unknown as Plugin<[], Root>);
+  }
+  processor.use(remarkTaskWikiLinks(taskTargets, environmentId, markdown));
+  return processor.runSync(processor.parse(markdown), { value: markdown }) as Node;
+}
+
+function links(node: Node): Array<{ url: string | undefined; label: string }> {
+  if (node.type === "link") {
+    return [
+      {
+        url: node.url,
+        label: node.children?.map((child) => child.value ?? "").join("") ?? "",
+      },
+    ];
+  }
+  return node.children?.flatMap(links) ?? [];
+}
+
+function text(node: Node): string {
+  if (node.value) return node.value;
+  return node.children?.map(text).join("") ?? "";
+}
+
+it("renders registered task wikilinks as app links with aliases and default labels", () => {
+  const tree = renderTree("See [[Parent decision|the parent]] and [[Parent decision]].");
+
+  expect(links(tree)).toEqual([
+    { url: `/task/test-environment/${parentId}`, label: "the parent" },
+    { url: `/task/test-environment/${parentId}`, label: "Parent decision" },
+  ]);
+});
+
+it("leaves links to unregistered catalogue rows untouched", () => {
+  const tree = renderTree("[[Unregistered]]", [unregistered]);
+
+  expect(links(tree)).toEqual([]);
+  expect(text(tree)).toContain("[[Unregistered]]");
+});
+
+it("handles only links marked at a wikilink source position", () => {
+  const markdown = "[[Parent decision]]";
+  const markedLink = {
+    properties: { dataTaskDocumentId: parentId },
+    position: { start: { offset: 0 }, end: { offset: markdown.length } },
+  };
+  expect(taskWikiLinkIdFromNode(markedLink, markdown)).toBe(parentId);
+
+  const authoredAnchor = `<a data-task-document-id="${parentId}" href="/task/test-environment/${parentId}">Parent</a>`;
+  expect(
+    taskWikiLinkIdFromNode(
+      {
+        properties: { dataTaskDocumentId: parentId },
+        position: { start: { offset: 0 }, end: { offset: authoredAnchor.length } },
+      },
+      authoredAnchor,
+    ),
+  ).toBeNull();
+  expect(taskWikiLinkIdFromNode({ ...markedLink, properties: {} }, markdown)).toBeNull();
+});
+
+it("leaves unknown, ambiguous, code, nested, embed, raw HTML, and escaped syntax untouched", () => {
+  const tree = renderTree(
+    "[[Missing task]] and `[[Parent decision]]`\n\n```md\n[[Parent decision]]\n```",
+  );
+
+  expect(links(tree)).toEqual([]);
+  expect(text(tree)).toContain("[[Missing task]]");
+  expect(text(tree)).toContain("[[Parent decision]]");
+
+  expect(links(renderTree("[[Parent decision]]", [parent, duplicate]))).toEqual([]);
+  expect(links(renderTree("[Outer [[Parent decision]]](https://example.test)"))).toEqual([
+    { url: "https://example.test", label: "Outer [[Parent decision]]" },
+  ]);
+  expect(links(renderTree("![[Parent decision]]"))).toEqual([]);
+  expect(
+    links(
+      renderTree(
+        '<a href="/task/test-environment/18000000-0000-4000-8000-000000000001">Parent</a>',
+      ),
+    ),
+  ).toEqual([]);
+  expect(links(renderTree("\\[\\[Parent decision\\]\\]"))).toEqual([]);
+  expect(links(renderTree("\\[\\[Parent decision\\]\\] and [[Parent decision]]"))).toEqual([
+    { url: `/task/test-environment/${parentId}`, label: "Parent decision" },
+  ]);
+});
+
+it("keeps an escaped wikilink literal when followed by the same real wikilink", () => {
+  const markdown = String.raw`\[[Parent decision]] and [[Parent decision]]`;
+  const tree = renderTree(markdown);
+  const children = tree.children?.[0]?.children ?? [];
+
+  expect(children.map((child) => child.type)).toEqual(["text", "link"]);
+  expect(children[0]?.value).toBe("[[Parent decision]] and ");
+  expect(children[1]?.position?.start?.offset).toBe(markdown.lastIndexOf("[[Parent decision]]"));
+});
+
+it("resolves relative paths using host path case rules", () => {
+  expect(links(renderTree("[[tasks/Parent decision.md]]"))).toEqual([
+    { url: `/task/test-environment/${parentId}`, label: "Parent decision" },
+  ]);
+  expect(links(renderTree("[[tasks/README.md]]", [readme]))).toEqual([]);
+  expect(links(renderTree("[[tasks/Readme.md]]", [readme]))).toEqual([
+    { url: `/task/test-environment/${readmeId}`, label: "Readme" },
+  ]);
+  expect(links(renderTree("[[c:/VAULT/TASKS/WINDOWS ITEM.md]]", [windowsTask]))).toEqual([
+    { url: `/task/test-environment/${windowsId}`, label: "Windows item" },
+  ]);
+});
+
+it("resolves task links in recovered over-indented list prose", () => {
+  const markdown =
+    "A long preceding paragraph moves the recovered list past its synthetic child offsets.\n\n" +
+    "-       see [[Parent decision]]";
+  expect(links(renderTree(markdown, [parent], true))).toEqual([
+    { url: `/task/test-environment/${parentId}`, label: "Parent decision" },
+  ]);
+
+  const escapedThenEmphasized =
+    "A long preceding paragraph moves the recovered list past its synthetic child offsets.\n\n" +
+    "-       \\[[Parent decision]] and *[[Parent decision]]*";
+  expect(links(renderTree(escapedThenEmphasized, [parent], true))).toEqual([
+    { url: `/task/test-environment/${parentId}`, label: "Parent decision" },
+  ]);
+
+  const shortPreludeWithLinks =
+    "x\n\n-       [[Parent decision]] and *[[Readme]]* plus trailing text that overlaps synthetic offsets";
+  expect(links(renderTree(shortPreludeWithLinks, [parent, readme], true))).toEqual([
+    { url: `/task/test-environment/${parentId}`, label: "Parent decision" },
+    { url: `/task/test-environment/${readmeId}`, label: "Readme" },
+  ]);
+
+  const nestedRecoveredLinks = "x\n\n-       [[Parent decision]]\n        - [[Readme]]";
+  expect(links(renderTree(nestedRecoveredLinks, [parent, readme], true))).toEqual([
+    { url: `/task/test-environment/${parentId}`, label: "Parent decision" },
+    { url: `/task/test-environment/${readmeId}`, label: "Readme" },
+  ]);
+});
+
+it("keeps the inherited source range for nested recovered list items", () => {
+  const markdown = "[[Parent decision]] and [[Readme]]";
+  const tree = {
+    type: "root",
+    children: [
+      {
+        type: "listItem",
+        data: { t3RecoveredListIndentation: true },
+        position: { start: { offset: 0 }, end: { offset: markdown.length } },
+        children: [
+          {
+            type: "listItem",
+            data: { t3RecoveredListIndentation: true },
+            position: { start: { offset: 0 }, end: { offset: "[[Parent decision]]".length } },
+            children: [
+              {
+                type: "text",
+                value: "[[Readme]]",
+                position: { start: { offset: 0 }, end: { offset: "[[Readme]]".length } },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  } as unknown as Root;
+
+  const processor = unified().use(remarkTaskWikiLinks([readme], environmentId, markdown));
+  const transformed = processor.runSync(tree, { value: markdown }) as Node;
+
+  expect(links(transformed)).toEqual([
+    { url: `/task/test-environment/${readmeId}`, label: "Readme" },
+  ]);
+});
