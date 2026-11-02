@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   defaultFolder: vi.fn(),
   legacyFolder: null as string | null,
   configLoaded: true,
+  settingsWriteAccess: true,
   removeLegacyFolder: vi.fn(),
   settingsFolder: "",
   updateSettings: vi.fn(),
@@ -48,7 +49,7 @@ vi.mock(import("@effect/atom-react"), async (importOriginal) => ({
       ? state.configLoaded
         ? { settings: { newTaskFolder: state.settingsFolder } }
         : null
-      : true) as never,
+      : state.settingsWriteAccess) as never,
 }));
 
 import { useNewTaskStore } from "~/newTaskStore";
@@ -321,6 +322,7 @@ it("keeps a folder edit made before the managed folder loads", async () => {
 it("does not use or migrate a legacy folder before server config loads", async () => {
   state.legacyFolder = "/old/client/tasks";
   state.configLoaded = false;
+  state.settingsWriteAccess = true;
   state.settingsFolder = "";
   state.updateSettings.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.removeLegacyFolder.mockReset();
@@ -340,7 +342,13 @@ it("does not use or migrate a legacy folder before server config loads", async (
   );
   const folder = page.getByRole("textbox", { name: /Folder/ });
   await expect.element(folder).toHaveValue("/managed/tasks");
-  await expect.element(page.getByText(/The folder only applies to this task/)).toBeVisible();
+  await expect
+    .element(
+      page.getByText(
+        /Server settings have not loaded yet, so this folder will apply to this task only\./,
+      ),
+    )
+    .toBeVisible();
   await userEvent.type(page.getByRole("textbox", { name: "Title" }), "Keep server default{Enter}");
 
   expect(state.updateSettings).not.toHaveBeenCalled();
@@ -349,4 +357,41 @@ it("does not use or migrate a legacy folder before server config loads", async (
   expect(useNewTaskStore.getState().byId[taskDocumentId]?.directory).toBe("/managed/tasks");
   expect(onPlanned).toHaveBeenCalledOnce();
   expect(onClose).toHaveBeenCalledOnce();
+});
+
+it("explains the task-only folder when the user cannot update server settings", async () => {
+  state.legacyFolder = "/old/client/tasks";
+  state.configLoaded = true;
+  state.settingsWriteAccess = false;
+  state.settingsFolder = "";
+  state.updateSettings.mockReset();
+  state.defaultFolder.mockResolvedValue(AsyncResult.success({ directory: "/managed/tasks" }));
+  useNewTaskStore.setState({ byId: {} });
+  const onClose = vi.fn();
+  const onPlanned = vi.fn();
+
+  await using _screen = await render(
+    <TaskCreateDialog
+      environmentId={environmentId}
+      taskDocumentId={taskDocumentId}
+      onClose={onClose}
+      onPlanned={onPlanned}
+    />,
+    { router: false },
+  );
+
+  await expect
+    .element(
+      page.getByText(
+        /You do not have settings write access, so this folder will apply to this task only\./,
+      ),
+    )
+    .toBeVisible();
+  await userEvent.type(page.getByRole("textbox", { name: "Title" }), "Use task folder{Enter}");
+
+  expect(state.updateSettings).not.toHaveBeenCalled();
+  expect(useNewTaskStore.getState().byId[taskDocumentId]?.directory).toBe("/old/client/tasks");
+  expect(onPlanned).toHaveBeenCalledOnce();
+  expect(onClose).toHaveBeenCalledOnce();
+  state.settingsWriteAccess = true;
 });

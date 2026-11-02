@@ -8,7 +8,7 @@ Choose **+** next to **Tasks** in the sidebar and enter the file's path on that 
 
 ## Create a task
 
-In a new thread, choose **Task > Create new task...**, then enter a title and an optional description. Nothing is written until you send the thread, so cancelling the draft leaves no file. Sending creates the file, keeping your description word for word, and starts the thread on it. The task folder defaults to a managed `tasks` folder in T3 Code's data directory; type another path to use your own. The server saves that path as its default for supported clients. If an older server cannot save it, you can use the path for that task only.
+In a new thread, choose **Task > Create new task...**, then enter a title and an optional description. Nothing is written until you send the thread, so cancelling the draft leaves no file. Sending creates the file, keeping your description word for word, and starts the thread on it. The task folder defaults to a managed `tasks` folder in T3 Code's data directory; type another path to use your own. The server saves that path as its default for supported clients when your connection can update server settings. If the server does not support the setting or you lack settings write access, you can use the path for that task only.
 
 By default the thread's agent also enriches the task: it adds a goal and context to the file and keeps your description unchanged. If that fails, the thread shows **Retry** and the task stays available. Later threads on the task only read it.
 

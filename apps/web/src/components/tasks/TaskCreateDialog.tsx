@@ -185,9 +185,11 @@ export function TaskCreateDialog(props: {
                   Creates the file in {destination ?? "the environment's managed folder"}.{" "}
                   {serverFolderUnsupported
                     ? "This server did not save the shared default; this folder will apply to this task only."
-                    : canUpdateSettings
-                      ? "This server saves this as its default when it supports the setting."
-                      : "The folder only applies to this task without settings write access."}
+                    : !serverConfigLoaded
+                      ? "Server settings have not loaded yet, so this folder will apply to this task only."
+                      : hasSettingsWriteAccess
+                        ? "This server saves this as its default when it supports the setting."
+                        : "You do not have settings write access, so this folder will apply to this task only."}
                 </span>
               </label>
               {error ? (
