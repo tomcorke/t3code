@@ -32,7 +32,7 @@ export function ignoredCheckInputPathspecs(ignoredPaths: ReadonlyArray<string>) 
     }
 
     const directory = escapeGlobPath(path.slice(0, -1));
-    if ([".generated", ".astro"].includes(directory.split("/").at(-1) ?? "")) {
+    if (directory.split("/").some((part) => part === ".generated" || part === ".astro")) {
       pathspecs.add(`:(glob)${directory}/**`);
       pathspecs.add(`:(exclude,glob)${directory}/**/node_modules/**`);
       continue;

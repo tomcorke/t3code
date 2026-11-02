@@ -23,7 +23,9 @@ it("preserves eligible ignored cache inputs while pruning node_modules", () => {
     git("init", "--quiet");
     NodeFS.writeFileSync(NodePath.join(root, ".gitignore"), "*\n");
     write("apps/mobile/.generated/source.js");
+    write("apps/mobile/.generated/cache/cache.js");
     write("apps/web/.astro/types.d.ts");
+    write("apps/web/.astro/cache/cache.bin");
     write("cache/ambient.d.ts");
     write(".env.local");
     write(".env-cache/private.txt");
@@ -82,8 +84,8 @@ it("preserves eligible ignored cache inputs while pruning node_modules", () => {
     expect(
       select([
         ...collapsed,
-        "apps/mobile/.generated/",
-        "apps/web/.astro/",
+        "apps/mobile/.generated/cache/",
+        "apps/web/.astro/cache/",
         "node_modules/package/",
       ]),
     ).toEqual(previous);
@@ -91,7 +93,9 @@ it("preserves eligible ignored cache inputs while pruning node_modules", () => {
       ".env.local",
       ".t3/session/agent.d.ts",
       ".turbo/cache/.env.local",
+      "apps/mobile/.generated/cache/cache.js",
       "apps/mobile/.generated/source.js",
+      "apps/web/.astro/cache/cache.bin",
       "apps/web/.astro/types.d.ts",
       "apps/web/dist/generated/types.d.ts",
       "build/generated/types.d.ts",
