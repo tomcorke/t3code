@@ -3,6 +3,7 @@ import {
   ProjectId,
   RunId,
   RuntimeRequestId,
+  TaskDocumentId,
   ThreadId,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ThreadShell,
@@ -534,6 +535,48 @@ describe("v2 thread shell lists", () => {
       setThread({ ...running, title: "Renamed" }, 3);
       expect(harness.registry.get(listAtom)).not.toBe(first);
       expect(harness.registry.get(listAtom)[0]?.title).toBe("Renamed");
+    } finally {
+      dispose();
+      harness.registry.dispose();
+    }
+  });
+
+  it("keeps quiet shell lists scoped to their environment", () => {
+    const harness = makeHarness([environmentId, remoteEnvironmentId]);
+    const localThread = { ...v2ThreadShell, id: ThreadId.make("local-thread") };
+    const taskDocumentId = TaskDocumentId.make("11111111-1111-4111-8111-111111111111");
+    const archivedThread = {
+      ...v2ThreadShell,
+      id: ThreadId.make("archived-thread"),
+      taskDocumentId,
+      archivedAt: v2Now,
+    };
+    const remoteThread = { ...v2ThreadShell, id: ThreadId.make("remote-thread") };
+    harness.registry.set(harness.snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [localThread],
+      archivedThreads: [archivedThread],
+    });
+    harness.registry.set(harness.snapshotAtom(remoteEnvironmentId), {
+      ...v2ShellSnapshot,
+      threads: [remoteThread],
+    });
+    const scopedAtom = harness.threads.quietThreadShellsForEnvironmentAtom(environmentId);
+    const dispose = harness.registry.mount(scopedAtom);
+    try {
+      const localShells = harness.registry.get(scopedAtom);
+      expect(localShells).toHaveLength(2);
+      expect(localShells[0]?.environmentId).toBe(environmentId);
+      const archivedShell = localShells.find((thread) => thread.id === archivedThread.id);
+      expect(archivedShell?.taskDocumentId).toBe(taskDocumentId);
+      expect(archivedShell?.archivedAt).not.toBeNull();
+
+      harness.registry.set(harness.snapshotAtom(remoteEnvironmentId), {
+        ...v2ShellSnapshot,
+        snapshotSequence: 2,
+        threads: [{ ...remoteThread, title: "Changed remotely" }],
+      });
+      expect(harness.registry.get(scopedAtom)).toBe(localShells);
     } finally {
       dispose();
       harness.registry.dispose();
