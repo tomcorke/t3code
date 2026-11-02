@@ -16,6 +16,7 @@ import * as Queue from "effect/Queue";
 import * as Fiber from "effect/Fiber";
 import { TASK_DOCUMENT_MAX_BYTES, TaskDocumentId } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as TaskDocuments from "./TaskDocuments.ts";
 
@@ -24,6 +25,7 @@ const layer = TaskDocuments.layer.pipe(
   Layer.provideMerge(
     ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-task-documents-" }),
   ),
+  Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provide(Layer.succeed(HostProcess.Platform, HostProcess.Platform.defaultValue())),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -578,6 +580,17 @@ describe("TaskDocuments", () => {
           /^---\nid: aaaaaaaa-aaaa-4aaa-8aaa-000000000001\n[\s\S]*\n---\n# Ship "the" café plan: 雪\n\n## Source prompt\nLine one\nstate: not a field\n\n## Activity Log\n- \*\*\d{4}-\d\d-\d\d \d\d:\d\d\*\* - Task created in T3 Code\n$/u,
         );
         expect(yield* fs.readFileString(created.summary.canonicalPath)).toBe(created.contents);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
+
+    it.effect("uses the environment's configured new-task folder", () =>
+      Effect.gen(function* () {
+        const { directory, path, fs, service } = yield* setup;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        yield* settings.updateSettings({ newTaskFolder: directory });
+        expect(yield* service.defaultFolder()).toEqual({ directory });
+        const created = yield* service.create(input("000000000013"));
+        expect(path.dirname(created.summary.canonicalPath)).toBe(yield* fs.realPath(directory));
       }).pipe(Effect.scoped, Effect.provide(layer)),
     );
 

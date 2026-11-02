@@ -95,3 +95,12 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
     );
   }),
 );
+
+it("includes the new-task folder in environment preferences", () => {
+  expect(
+    EnvironmentHandlers.preferences({
+      ...DEFAULT_SERVER_SETTINGS,
+      newTaskFolder: "C:/tasks",
+    }),
+  ).toMatchObject({ newTaskFolder: "C:/tasks" });
+});

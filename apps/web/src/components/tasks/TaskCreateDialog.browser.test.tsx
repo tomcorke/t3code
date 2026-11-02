@@ -5,18 +5,34 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 
-const state = vi.hoisted(() => ({ create: vi.fn(), defaultFolder: vi.fn() }));
+const state = vi.hoisted(() => ({
+  create: vi.fn(),
+  defaultFolder: vi.fn(),
+  updateSettings: vi.fn(),
+}));
 
 vi.mock(import("~/state/taskDocuments"), () => ({
   taskDocumentEnvironment: {
     create: { name: "create" },
     defaultFolder: { name: "defaultFolder" },
   } as never,
-  readTaskFolder: () => null,
-  writeTaskFolder: () => {},
 }));
 vi.mock(import("~/state/use-atom-command"), () => ({
-  useAtomCommand: ((command: { name: "create" | "defaultFolder" }) => state[command.name]) as never,
+  useAtomCommand: ((command: { name: "create" | "defaultFolder" | "updateSettings" }) =>
+    state[command.name]) as never,
+}));
+vi.mock(
+  import("~/state/server"),
+  () =>
+    ({
+      serverEnvironment: {
+        updateSettings: { name: "updateSettings", permissionAtom: () => "permission" },
+      },
+    }) as never,
+);
+vi.mock(import("@effect/atom-react"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useAtomValue: () => true,
 }));
 
 import { useNewTaskStore } from "~/newTaskStore";
@@ -39,7 +55,13 @@ it("plans a new task without writing a file, and cancelling plans nothing", asyn
   );
   // The dialog is a portal and needs no routes.
   await using cancelled = await render(dialog, { router: false });
-  await expect.element(page.getByText("Creates the file in /managed/tasks")).toBeVisible();
+  await expect
+    .element(
+      page.getByText(
+        /Creates the file in \/managed\/tasks\. Changes are saved as this server's default\./,
+      ),
+    )
+    .toBeVisible();
   await userEvent.type(page.getByRole("textbox", { name: "Title" }), "Abandoned");
   await userEvent.keyboard("{Escape}");
   expect(onClose).toHaveBeenCalledOnce();
@@ -55,10 +77,14 @@ it("plans a new task without writing a file, and cancelling plans nothing", asyn
     [taskDocumentId]: {
       title: "Ship it",
       description: "Plan the release",
-      directory: null,
+      directory: "/managed/tasks",
       enrich: true,
     },
   });
   expect(onPlanned).toHaveBeenCalledWith(taskDocumentId);
   expect(state.create).not.toHaveBeenCalled();
+  expect(state.updateSettings).toHaveBeenCalledWith({
+    environmentId,
+    input: { patch: { newTaskFolder: "/managed/tasks" } },
+  });
 });

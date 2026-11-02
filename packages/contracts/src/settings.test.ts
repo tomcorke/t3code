@@ -306,6 +306,14 @@ describe("ServerSettings worktree defaults", () => {
   });
 });
 
+it("defaults and accepts the environment's new-task folder", () => {
+  expect(decodeServerSettings({}).newTaskFolder).toBe("");
+  expect(decodeServerSettings({ newTaskFolder: "  C:/tasks  " }).newTaskFolder).toBe("C:/tasks");
+  expect(decodeServerSettingsPatch({ newTaskFolder: "  C:/tasks  " })).toEqual({
+    newTaskFolder: "C:/tasks",
+  });
+});
+
 describe("ServerSettings.sourceControlWritingStyle", () => {
   it.each([
     { legacy: "", mode: "repo_conventions", customInstructions: "" },
