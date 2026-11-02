@@ -18,7 +18,10 @@ type MarkdownNode = {
       offset?: number | undefined;
     };
   };
-  data?: { hProperties?: Record<string, string> };
+  data?: {
+    hProperties?: Record<string, string>;
+    t3RecoveredListIndentation?: boolean;
+  };
   children?: MarkdownNode[];
 };
 
@@ -130,10 +133,12 @@ function replaceWikiLinks(
   lineStarts: ReadonlyArray<number>,
   sourceCursors: Map<string, number>,
   sourceRange?: SourceRange,
+  ignoreChildSourceRanges = false,
 ): MarkdownNode[] {
   if (node.type === "text" && typeof node.value === "string") {
     const ownRange = nodeSourceRange(node);
     const useOwnRange =
+      !ignoreChildSourceRanges &&
       ownRange !== null &&
       (sourceRange === undefined ||
         (ownRange.start >= sourceRange.start && ownRange.end <= sourceRange.end));
@@ -191,15 +196,21 @@ function replaceWikiLinks(
   if (node.type === "link" || node.type === "linkReference") return [node];
   if (node.children) {
     const ownRange = nodeSourceRange(node);
-    const childSourceRange =
-      node.type === "listItem"
-        ? (ownRange ?? sourceRange)
-        : node.type === "paragraph" &&
-            ownRange !== null &&
-            (sourceRange === undefined ||
-              (ownRange.start >= sourceRange.start && ownRange.end <= sourceRange.end))
-          ? ownRange
-          : sourceRange;
+    const recoveredListItem =
+      node.type === "listItem" && node.data?.t3RecoveredListIndentation === true;
+    const ignoreChildRanges = ignoreChildSourceRanges || recoveredListItem;
+    const childSourceRange = recoveredListItem
+      ? (ownRange ?? sourceRange)
+      : ignoreChildSourceRanges
+        ? (sourceRange ?? ownRange ?? undefined)
+        : node.type === "listItem"
+          ? (ownRange ?? sourceRange)
+          : node.type === "paragraph" &&
+              ownRange !== null &&
+              (sourceRange === undefined ||
+                (ownRange.start >= sourceRange.start && ownRange.end <= sourceRange.end))
+            ? ownRange
+            : sourceRange;
     node.children = node.children.flatMap((child) =>
       replaceWikiLinks(
         child,
@@ -209,6 +220,7 @@ function replaceWikiLinks(
         lineStarts,
         sourceCursors,
         childSourceRange,
+        ignoreChildRanges,
       ),
     );
   }

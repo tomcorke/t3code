@@ -9,6 +9,7 @@ interface MarkdownAstNode {
   readonly type: string;
   readonly value?: unknown;
   readonly position?: MarkdownPosition;
+  data?: Record<string, unknown>;
   children?: MarkdownAstNode[];
 }
 
@@ -115,6 +116,7 @@ function attachListItemIndentationNormalizer(this: MarkdownParser) {
       }
       node.children = node.children.flatMap((child) => {
         if (isSameLineOverIndentedCode(child, node, source)) {
+          node.data = { ...node.data, t3RecoveredListIndentation: true };
           const recovered = blocksFromIndentedCode(child, this);
           for (const block of recovered.blocks) {
             visit(block, recovered.source);

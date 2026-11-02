@@ -166,4 +166,17 @@ it("resolves task links in recovered over-indented list prose", () => {
   expect(links(renderTree(escapedThenEmphasized, [parent], true))).toEqual([
     { url: `/task/test-environment/${parentId}`, label: "Parent decision" },
   ]);
+
+  const shortPreludeWithLinks =
+    "x\n\n-       [[Parent decision]] and *[[Readme]]* plus trailing text that overlaps synthetic offsets";
+  expect(links(renderTree(shortPreludeWithLinks, [parent, readme], true))).toEqual([
+    { url: `/task/test-environment/${parentId}`, label: "Parent decision" },
+    { url: `/task/test-environment/${readmeId}`, label: "Readme" },
+  ]);
+
+  const nestedRecoveredLinks = "x\n\n-       [[Parent decision]]\n        - [[Readme]]";
+  expect(links(renderTree(nestedRecoveredLinks, [parent, readme], true))).toEqual([
+    { url: `/task/test-environment/${parentId}`, label: "Parent decision" },
+    { url: `/task/test-environment/${readmeId}`, label: "Readme" },
+  ]);
 });
