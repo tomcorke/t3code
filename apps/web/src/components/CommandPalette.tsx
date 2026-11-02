@@ -45,11 +45,12 @@ import {
   type DesktopWslState,
   type EnvironmentId,
   type FilesystemBrowseResult,
+  TaskDocumentId,
   SourceControlProviderKind,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
   BugIcon,
@@ -61,6 +62,7 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
+  ListChecksIcon,
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -110,6 +112,7 @@ import { serverEnvironment } from "../state/server";
 import { threadEnvironment } from "../state/threads";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
+import { taskDocumentEnvironment } from "../state/taskDocuments";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { useScratchProject } from "../hooks/useScratchProject";
@@ -149,6 +152,7 @@ import {
   isMacPlatform,
   isWindowsPlatform,
   newProjectId,
+  randomUUID,
 } from "../lib/utils";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useAvailableSettingsSearchItems } from "./settings/useAvailableSettingsSearchItems";
@@ -190,6 +194,7 @@ import {
   getEnvironmentBrowsePlatform,
   remoteProjectInputPlaceholder,
   reduceCommandPaletteSearchState,
+  resolveTaskCaptureEnvironmentId,
   type SearchOverlayMode,
 } from "./CommandPalette.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
@@ -225,6 +230,7 @@ import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
+import { TaskCreateDialog } from "./tasks/TaskCreateDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
@@ -374,6 +380,10 @@ function OpenCommandPaletteDialog(props: {
 }) {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
+  const routeEnvironmentId = useParams({
+    strict: false,
+    select: (params) => params.environmentId,
+  });
   const { openChildSearch, setOpen } = props;
   // Keyed by palette session: the intent and restored search only seed this
   // mount, and closing must not change what the closing palette shows.
@@ -428,6 +438,7 @@ function OpenCommandPaletteDialog(props: {
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const serverConfigs = useServerConfigs();
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
@@ -442,7 +453,7 @@ function OpenCommandPaletteDialog(props: {
         ? scopeThreadRef(activeThread.environmentId, activeThread.id)
         : null;
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(referenceThreadRef);
-  const activeThreadServerConfig = useServerConfigs().get(
+  const activeThreadServerConfig = serverConfigs.get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
   const canShareActiveThreadWithGuest = useAtomValue(
@@ -480,6 +491,7 @@ function OpenCommandPaletteDialog(props: {
     readonly environmentId: EnvironmentId;
     readonly sourcesEnvironmentId: EnvironmentId | null;
   } | null>(null);
+  const [taskCaptureDocumentId, setTaskCaptureDocumentId] = useState<TaskDocumentId | null>(null);
   const [newProjectPublishes, setNewProjectPublishes] = useState(false);
   const [newProjectPublishKind, setNewProjectPublishKind] =
     useState<SourceControlProviderKind | null>(null);
@@ -621,6 +633,18 @@ function OpenCommandPaletteDialog(props: {
       ?.serverConfig?.threadFind === true;
   const currentProjectEnvironmentId =
     activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
+  const taskCaptureEnvironmentId =
+    resolveTaskCaptureEnvironmentId({
+      currentProjectEnvironmentId,
+      routeEnvironmentId: (routeEnvironmentId as EnvironmentId | undefined) ?? null,
+      primaryEnvironmentId,
+    }) ?? ("" as EnvironmentId);
+  const taskCaptureSupported =
+    serverConfigs.get(taskCaptureEnvironmentId)?.environment.capabilities.taskDocuments === true;
+  const taskCapturePermitted = useAtomValue(
+    taskDocumentEnvironment.create.permissionAtom(taskCaptureEnvironmentId),
+  );
+  const canCreateTaskCapture = taskCaptureSupported && taskCapturePermitted;
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
   const scratchTargetEnvironmentId = scratchEnvironmentId(currentProjectEnvironmentId);
   const supportsTriage = (environmentId: EnvironmentId | null) =>
@@ -1411,6 +1435,21 @@ function OpenCommandPaletteDialog(props: {
       keepOpen: true,
       run: async () => {
         openNewProjectFlow();
+      },
+    });
+  }
+
+  if (canCreateTaskCapture) {
+    actionItems.push({
+      kind: "action",
+      value: "action:create-task",
+      searchTerms: ["create task", "new task", "quick capture", "capture task"],
+      title: "Create task",
+      description: "Open a task document without starting a thread",
+      icon: <ListChecksIcon className={ITEM_ICON_CLASS} />,
+      keepOpen: true,
+      run: async () => {
+        setTaskCaptureDocumentId(TaskDocumentId.make(randomUUID()));
       },
     });
   }
@@ -2667,6 +2706,22 @@ function OpenCommandPaletteDialog(props: {
       showBackHint={isSubmenu}
       value={query}
     >
+      {taskCaptureDocumentId !== null ? (
+        <TaskCreateDialog
+          environmentId={taskCaptureEnvironmentId}
+          taskDocumentId={taskCaptureDocumentId}
+          mode="create"
+          onClose={() => setTaskCaptureDocumentId(null)}
+          onCreated={(taskDocumentId) => {
+            setTaskCaptureDocumentId(null);
+            props.setOpen(false);
+            void navigate({
+              to: "/task/$environmentId/$taskDocumentId",
+              params: { environmentId: taskCaptureEnvironmentId, taskDocumentId },
+            });
+          }}
+        />
+      ) : null}
       {newProjectPathPreview !== null ? (
         <NewProjectSummary
           name={newProjectName}

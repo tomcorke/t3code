@@ -25,19 +25,23 @@ import {
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-/** Only plans the task; the file is made when the thread is sent, so cancelling a draft leaves nothing behind. */
+/** Plans a task for a thread or creates its document directly from quick capture. */
 export function TaskCreateDialog(props: {
   readonly environmentId: EnvironmentId;
   readonly taskDocumentId: TaskDocumentId;
+  readonly mode?: "plan" | "create";
   readonly initial?: NewTaskPlan | undefined;
   readonly onClose: () => void;
-  readonly onPlanned: (taskDocumentId: TaskDocumentId) => void;
+  readonly onPlanned?: (taskDocumentId: TaskDocumentId) => void;
+  readonly onCreated?: (taskDocumentId: TaskDocumentId) => void;
 }) {
+  const mode = props.mode ?? "plan";
   const plan = useNewTaskStore((store) => store.plan);
   const existing = props.initial;
   const defaultFolder = useAtomCommand(taskDocumentEnvironment.defaultFolder, {
     reportFailure: false,
   });
+  const createTask = useAtomCommand(taskDocumentEnvironment.create, { reportFailure: false });
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const hasSettingsWriteAccess = useAtomValue(
     serverEnvironment.updateSettings.permissionAtom(props.environmentId),
@@ -120,8 +124,40 @@ export function TaskCreateDialog(props: {
       }
       removeLegacyTaskFolder(props.environmentId);
     }
+
     submitting.current = false;
     setIsSubmitting(false);
+    if (mode === "create") {
+      submitting.current = true;
+      setIsSubmitting(true);
+      setError(null);
+      let createdTaskDocumentId: TaskDocumentId | null = null;
+      try {
+        const result = await createTask({
+          environmentId: props.environmentId,
+          input: {
+            taskDocumentId: props.taskDocumentId,
+            title: title.trim(),
+            description: description.trim(),
+            ...(directory === "" ? {} : { directory }),
+          },
+        });
+        if (result._tag === "Failure") {
+          const failure = squashAtomCommandFailure(result);
+          setError(failure instanceof Error ? failure.message : String(failure));
+        } else {
+          createdTaskDocumentId = result.value.summary.taskDocumentId;
+        }
+      } catch (failure) {
+        setError(failure instanceof Error ? failure.message : String(failure));
+      } finally {
+        submitting.current = false;
+        setIsSubmitting(false);
+      }
+      if (createdTaskDocumentId !== null) props.onCreated?.(createdTaskDocumentId);
+      return;
+    }
+
     const next: NewTaskPlan = {
       title: title.trim(),
       description: description.trim(),
@@ -129,7 +165,7 @@ export function TaskCreateDialog(props: {
       enrich,
     };
     plan(props.taskDocumentId, next);
-    props.onPlanned(props.taskDocumentId);
+    props.onPlanned?.(props.taskDocumentId);
     close();
   };
 
@@ -146,8 +182,9 @@ export function TaskCreateDialog(props: {
           <DialogHeader>
             <DialogTitle>Create new task</DialogTitle>
             <DialogDescription>
-              The task file is created when you send this thread, and nothing is written before
-              then.
+              {mode === "create"
+                ? "Creates and opens this task file without starting a thread."
+                : "The task file is created when you send this thread, and nothing is written before then."}
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
@@ -158,6 +195,7 @@ export function TaskCreateDialog(props: {
                   autoFocus
                   maxLength={200}
                   value={title}
+                  disabled={mode === "create" && isSubmitting}
                   onChange={(event) => setTitle(event.target.value)}
                 />
               </label>
@@ -166,6 +204,7 @@ export function TaskCreateDialog(props: {
                 <Textarea
                   maxLength={20_000}
                   value={description}
+                  disabled={mode === "create" && isSubmitting}
                   placeholder="Kept word for word in the task file"
                   onChange={(event) => setDescription(event.target.value)}
                 />
@@ -174,6 +213,7 @@ export function TaskCreateDialog(props: {
                 Folder
                 <Input
                   value={folder}
+                  disabled={mode === "create" && isSubmitting}
                   placeholder={serverFolder ?? "Managed folder"}
                   onChange={(event) => {
                     folderTouched.current = true;
@@ -197,10 +237,12 @@ export function TaskCreateDialog(props: {
                   {error}
                 </p>
               ) : null}
-              <label className="flex items-center gap-2 text-sm">
-                <Checkbox checked={enrich} onCheckedChange={(checked) => setEnrich(checked)} />
-                Let this first thread enrich the task
-              </label>
+              {mode === "plan" ? (
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox checked={enrich} onCheckedChange={(checked) => setEnrich(checked)} />
+                  Let this first thread enrich the task
+                </label>
+              ) : null}
             </div>
           </DialogPanel>
           <DialogFooter>
@@ -209,10 +251,14 @@ export function TaskCreateDialog(props: {
             </Button>
             <Button type="submit" disabled={title.trim() === "" || isSubmitting}>
               {isSubmitting
-                ? "Saving…"
+                ? mode === "create"
+                  ? "Creating…"
+                  : "Saving…"
                 : serverFolderUnsupported
                   ? "Use for this task"
-                  : "Use new task"}
+                  : mode === "create"
+                    ? "Create task"
+                    : "Use new task"}
             </Button>
           </DialogFooter>
         </form>
