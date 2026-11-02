@@ -1,5 +1,6 @@
-import type { EnvironmentId, TaskDocumentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import type { EnvironmentId, TaskDocumentId } from "@t3tools/contracts";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -16,7 +17,11 @@ import {
 import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
 import { useNewTaskStore, type NewTaskPlan } from "~/newTaskStore";
-import { readLegacyTaskFolder, taskDocumentEnvironment } from "~/state/taskDocuments";
+import {
+  readLegacyTaskFolder,
+  removeLegacyTaskFolder,
+  taskDocumentEnvironment,
+} from "~/state/taskDocuments";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -33,21 +38,27 @@ export function TaskCreateDialog(props: {
   const defaultFolder = useAtomCommand(taskDocumentEnvironment.defaultFolder, {
     reportFailure: false,
   });
-  const updateSettings = useAtomCommand(serverEnvironment.updateSettings);
-  const canUpdateSettings = useAtomValue(
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
+  const hasSettingsWriteAccess = useAtomValue(
     serverEnvironment.updateSettings.permissionAtom(props.environmentId),
   );
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
+  const serverConfigLoaded = serverConfig !== null;
+  const canUpdateSettings = hasSettingsWriteAccess && serverConfigLoaded;
   const serverFolderSetting = serverConfig?.settings.newTaskFolder.trim() || null;
   const [title, setTitle] = useState(existing?.title ?? "");
   const [description, setDescription] = useState(existing?.description ?? "");
   const [folder, setFolder] = useState(
     () =>
-      existing?.directory ?? serverFolderSetting ?? readLegacyTaskFolder(props.environmentId) ?? "",
+      existing?.directory ??
+      serverFolderSetting ??
+      (serverConfigLoaded ? readLegacyTaskFolder(props.environmentId) : null) ??
+      "",
   );
   const folderTouched = useRef(existing?.directory !== null && existing?.directory !== undefined);
   const [enrich, setEnrich] = useState(existing?.enrich ?? true);
   const [serverFolder, setServerFolder] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchServerFolder = useEffectEvent((environmentId: EnvironmentId) =>
     defaultFolder({ environmentId, input: {} }),
@@ -62,7 +73,7 @@ export function TaskCreateDialog(props: {
           folderTouched.current
             ? currentFolder
             : (serverFolderSetting ??
-              readLegacyTaskFolder(props.environmentId) ??
+              (serverConfigLoaded ? readLegacyTaskFolder(props.environmentId) : null) ??
               result.value.directory),
         );
       }
@@ -70,16 +81,26 @@ export function TaskCreateDialog(props: {
     return () => {
       current = false;
     };
-  }, [props.environmentId, serverFolderSetting]);
+  }, [props.environmentId, serverConfigLoaded, serverFolderSetting]);
 
   const destination = folder.trim() || serverFolder;
   const submit = async () => {
     const directory = folder.trim();
     if (canUpdateSettings) {
-      await updateSettings({
+      const result = await updateSettings({
         environmentId: props.environmentId,
         input: { patch: { newTaskFolder: directory } },
       });
+      if (result._tag === "Failure") {
+        const failure = squashAtomCommandFailure(result);
+        setError(
+          failure instanceof Error
+            ? `Could not save the server's default folder: ${failure.message}`
+            : "Could not save the server's default folder. Try again before using this task.",
+        );
+        return;
+      }
+      removeLegacyTaskFolder(props.environmentId);
     }
     const next: NewTaskPlan = {
       title: title.trim(),
@@ -137,6 +158,7 @@ export function TaskCreateDialog(props: {
                   onChange={(event) => {
                     folderTouched.current = true;
                     setFolder(event.target.value);
+                    setError(null);
                   }}
                 />
                 <span className="text-muted-foreground text-xs">
@@ -146,6 +168,11 @@ export function TaskCreateDialog(props: {
                     : "The folder only applies to this task without settings write access."}
                 </span>
               </label>
+              {error ? (
+                <p role="alert" className="text-destructive-foreground text-sm">
+                  {error}
+                </p>
+              ) : null}
               <label className="flex items-center gap-2 text-sm">
                 <Checkbox checked={enrich} onCheckedChange={(checked) => setEnrich(checked)} />
                 Let this first thread enrich the task

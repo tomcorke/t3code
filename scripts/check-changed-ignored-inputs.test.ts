@@ -5,7 +5,10 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { expect, it } from "vite-plus/test";
 
-import { collectIgnoredCheckInputs } from "./check-changed-ignored-inputs.ts";
+import {
+  filterIgnoredCheckInputs,
+  ignoredCheckInputPathspecs,
+} from "./check-changed-ignored-inputs.ts";
 
 it("preserves eligible ignored cache inputs while pruning node_modules", () => {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-check-changed-ignored-"));
@@ -27,6 +30,11 @@ it("preserves eligible ignored cache inputs while pruning node_modules", () => {
     write("cache/readme.txt");
     write("node_modules/package/types.d.ts");
     write("cache/node_modules/nested-package/types.d.ts");
+    write(".t3/session/agent.d.ts");
+    write("build/generated/types.d.ts");
+    write("apps/web/dist/generated/types.d.ts");
+    write(".turbo/cache/.env.local");
+    write("packages/client-runtime/target/types.d.ts");
     write("cache/tracked.d.ts");
     git("add", "-f", "cache/tracked.d.ts");
     const previous = git(
@@ -57,16 +65,38 @@ it("preserves eligible ignored cache inputs while pruning node_modules", () => {
     )
       .split("\n")
       .filter(Boolean);
-    const tracked = new Set(git("ls-files", "--cached").split("\n").filter(Boolean));
-    expect(collectIgnoredCheckInputs(root, collapsed, tracked)).toEqual(previous);
+    const select = (ignoredPaths: ReadonlyArray<string>) =>
+      filterIgnoredCheckInputs(
+        git(
+          "ls-files",
+          "--others",
+          "--ignored",
+          "--exclude-standard",
+          "--",
+          ...ignoredCheckInputPathspecs(ignoredPaths),
+        )
+          .split("\n")
+          .filter(Boolean),
+      );
+    expect(select(collapsed)).toEqual(previous);
     expect(
-      collectIgnoredCheckInputs(root, [...collapsed, "node_modules/package/"], tracked),
+      select([
+        ...collapsed,
+        "apps/mobile/.generated/",
+        "apps/web/.astro/",
+        "node_modules/package/",
+      ]),
     ).toEqual(previous);
     expect(previous).toEqual([
       ".env.local",
+      ".t3/session/agent.d.ts",
+      ".turbo/cache/.env.local",
       "apps/mobile/.generated/source.js",
       "apps/web/.astro/types.d.ts",
+      "apps/web/dist/generated/types.d.ts",
+      "build/generated/types.d.ts",
       "cache/ambient.d.ts",
+      "packages/client-runtime/target/types.d.ts",
     ]);
   } finally {
     NodeFS.rmSync(root, { recursive: true, force: true });

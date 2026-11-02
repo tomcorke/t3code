@@ -1,4 +1,5 @@
 import { AsyncResult } from "effect/reactivity";
+import * as Cause from "effect/Cause";
 import { EnvironmentId, TaskDocumentId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -9,6 +10,8 @@ const state = vi.hoisted(() => ({
   create: vi.fn(),
   defaultFolder: vi.fn(),
   legacyFolder: null as string | null,
+  configLoaded: true,
+  removeLegacyFolder: vi.fn(),
   settingsFolder: "",
   updateSettings: vi.fn(),
 }));
@@ -19,6 +22,10 @@ vi.mock(import("~/state/taskDocuments"), () => ({
     defaultFolder: { name: "defaultFolder" },
   } as never,
   readLegacyTaskFolder: () => state.legacyFolder,
+  removeLegacyTaskFolder: () => {
+    state.removeLegacyFolder();
+    state.legacyFolder = null;
+  },
 }));
 vi.mock(import("~/state/use-atom-command"), () => ({
   useAtomCommand: ((command: { name: "create" | "defaultFolder" | "updateSettings" }) =>
@@ -38,7 +45,9 @@ vi.mock(import("@effect/atom-react"), async (importOriginal) => ({
   ...(await importOriginal()),
   useAtomValue: ((atom: unknown) =>
     atom === "serverConfig"
-      ? { settings: { newTaskFolder: state.settingsFolder } }
+      ? state.configLoaded
+        ? { settings: { newTaskFolder: state.settingsFolder } }
+        : null
       : true) as never,
 }));
 
@@ -52,6 +61,8 @@ it("plans a new task without writing a file, and cancelling plans nothing", asyn
   state.legacyFolder = "/old/client/tasks";
   state.settingsFolder = "";
   state.updateSettings.mockReset();
+  state.removeLegacyFolder.mockReset();
+  state.updateSettings.mockResolvedValue(AsyncResult.success(undefined));
   useNewTaskStore.setState({ byId: {} });
   state.defaultFolder.mockResolvedValue(AsyncResult.success({ directory: "/managed/tasks" }));
   const onClose = vi.fn();
@@ -98,6 +109,87 @@ it("plans a new task without writing a file, and cancelling plans nothing", asyn
     environmentId,
     input: { patch: { newTaskFolder: "/old/client/tasks" } },
   });
+  expect(state.removeLegacyFolder).toHaveBeenCalledOnce();
+});
+
+it("retires a legacy folder preference after successfully clearing the server default", async () => {
+  state.legacyFolder = "/old/client/tasks";
+  state.settingsFolder = "";
+  state.removeLegacyFolder.mockReset();
+  state.updateSettings.mockResolvedValue(AsyncResult.success(undefined));
+  state.defaultFolder.mockResolvedValue(AsyncResult.success({ directory: "/managed/tasks" }));
+  useNewTaskStore.setState({ byId: {} });
+  const onClose = vi.fn();
+  const onPlanned = vi.fn();
+
+  {
+    await using _screen = await render(
+      <TaskCreateDialog
+        environmentId={environmentId}
+        taskDocumentId={taskDocumentId}
+        onClose={onClose}
+        onPlanned={onPlanned}
+      />,
+      { router: false },
+    );
+    const folder = page.getByRole("textbox", { name: /Folder/ });
+    await expect.element(folder).toHaveValue("/old/client/tasks");
+    await userEvent.clear(folder);
+    await userEvent.type(page.getByRole("textbox", { name: "Title" }), "Use managed folder{Enter}");
+
+    expect(state.updateSettings).toHaveBeenCalledWith({
+      environmentId,
+      input: { patch: { newTaskFolder: "" } },
+    });
+    expect(state.removeLegacyFolder).toHaveBeenCalledOnce();
+    expect(useNewTaskStore.getState().byId[taskDocumentId]?.directory).toBeNull();
+    expect(onPlanned).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
+  }
+
+  await using _reopened = await render(
+    <TaskCreateDialog
+      environmentId={environmentId}
+      taskDocumentId={TaskDocumentId.make("ffffffff-ffff-4fff-8fff-ffffffffffff")}
+      onClose={vi.fn()}
+      onPlanned={vi.fn()}
+    />,
+    { router: false },
+  );
+  await expect.element(page.getByRole("textbox", { name: /Folder/ })).toHaveValue("/managed/tasks");
+});
+
+it("keeps the dialog open and does not plan a task when saving the server default fails", async () => {
+  state.legacyFolder = "/old/client/tasks";
+  state.settingsFolder = "";
+  state.removeLegacyFolder.mockReset();
+  state.updateSettings.mockResolvedValue(
+    AsyncResult.failure(Cause.fail(new Error("Server unavailable"))),
+  );
+  state.defaultFolder.mockResolvedValue(AsyncResult.success({ directory: "/managed/tasks" }));
+  useNewTaskStore.setState({ byId: {} });
+  const onClose = vi.fn();
+  const onPlanned = vi.fn();
+
+  await using _screen = await render(
+    <TaskCreateDialog
+      environmentId={environmentId}
+      taskDocumentId={taskDocumentId}
+      onClose={onClose}
+      onPlanned={onPlanned}
+    />,
+    { router: false },
+  );
+  await userEvent.type(page.getByRole("textbox", { name: "Title" }), "Retry me{Enter}");
+
+  await expect
+    .element(page.getByRole("alert"))
+    .toHaveTextContent("Could not save the server's default folder: Server unavailable");
+  expect(onClose).not.toHaveBeenCalled();
+  expect(onPlanned).not.toHaveBeenCalled();
+  expect(useNewTaskStore.getState().byId).toEqual({});
+  expect(state.removeLegacyFolder).not.toHaveBeenCalled();
+  expect(state.legacyFolder).toBe("/old/client/tasks");
 });
 
 it("prefers the environment folder over a legacy browser preference", async () => {
@@ -143,4 +235,37 @@ it("keeps a folder edit made before the managed folder loads", async () => {
   resolveDefaultFolder(AsyncResult.success({ directory: "/managed/tasks" }));
 
   await expect.element(folder).toHaveValue("/chosen/tasks");
+});
+
+it("does not use or migrate a legacy folder before server config loads", async () => {
+  state.legacyFolder = "/old/client/tasks";
+  state.configLoaded = false;
+  state.settingsFolder = "";
+  state.updateSettings.mockReset().mockResolvedValue(AsyncResult.success(undefined));
+  state.removeLegacyFolder.mockReset();
+  state.defaultFolder.mockResolvedValue(AsyncResult.success({ directory: "/managed/tasks" }));
+  useNewTaskStore.setState({ byId: {} });
+  const onClose = vi.fn();
+  const onPlanned = vi.fn();
+
+  await using _screen = await render(
+    <TaskCreateDialog
+      environmentId={environmentId}
+      taskDocumentId={taskDocumentId}
+      onClose={onClose}
+      onPlanned={onPlanned}
+    />,
+    { router: false },
+  );
+  const folder = page.getByRole("textbox", { name: /Folder/ });
+  await expect.element(folder).toHaveValue("/managed/tasks");
+  await expect.element(page.getByText(/The folder only applies to this task/)).toBeVisible();
+  await userEvent.type(page.getByRole("textbox", { name: "Title" }), "Keep server default{Enter}");
+
+  expect(state.updateSettings).not.toHaveBeenCalled();
+  expect(state.removeLegacyFolder).not.toHaveBeenCalled();
+  expect(state.legacyFolder).toBe("/old/client/tasks");
+  expect(useNewTaskStore.getState().byId[taskDocumentId]?.directory).toBe("/managed/tasks");
+  expect(onPlanned).toHaveBeenCalledOnce();
+  expect(onClose).toHaveBeenCalledOnce();
 });

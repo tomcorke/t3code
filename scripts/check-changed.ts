@@ -20,7 +20,10 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { decide, readWorkspace } from "../.github/scripts/ci-changes.cjs";
-import { collectIgnoredCheckInputs } from "./check-changed-ignored-inputs.ts";
+import {
+  filterIgnoredCheckInputs,
+  ignoredCheckInputPathspecs,
+} from "./check-changed-ignored-inputs.ts";
 
 const root = NodePath.resolve(import.meta.dirname, "..");
 const CODE = /\.[cm]?[jt]sx?$/;
@@ -73,11 +76,15 @@ const inputKey = () => {
       { cwd: root, maxBuffer: 1024 * 1024 * 1024 },
     ),
   );
-  const ignored = collectIgnoredCheckInputs(
-    root,
+  const ignoredPathspecs = ignoredCheckInputPathspecs(
     git("ls-files", "--others", "--ignored", "--exclude-standard", "--directory"),
-    new Set(git("ls-files", "--cached")),
   );
+  const ignored =
+    ignoredPathspecs.length === 0
+      ? []
+      : filterIgnoredCheckInputs(
+          git("ls-files", "--others", "--ignored", "--exclude-standard", "--", ...ignoredPathspecs),
+        );
   for (const file of [
     // Raw bytes of changed files too: .gitattributes normalizes line endings in
     // the diff, but the formatter reads the file as it is on disk.

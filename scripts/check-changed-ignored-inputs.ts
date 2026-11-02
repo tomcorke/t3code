@@ -1,44 +1,48 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodeFS from "node:fs";
-import * as NodePath from "node:path";
-
 const isCheckInput = (file: string) =>
   file.endsWith(".d.ts") ||
-  NodePath.posix.basename(file).startsWith(".env") ||
+  file.split("/").at(-1)?.startsWith(".env") === true ||
   file.split("/").some((part) => part === ".generated" || part === ".astro");
 const hasNodeModulesSegment = (file: string) => file.split("/").includes("node_modules");
+const escapeGlobPath = (path: string) =>
+  path
+    .replaceAll("\\", "\\\\")
+    .replaceAll("*", "\\*")
+    .replaceAll("?", "\\?")
+    .replaceAll("[", "\\[")
+    .replaceAll("]", "\\]");
 
-export function collectIgnoredCheckInputs(
-  root: string,
-  ignoredPaths: ReadonlyArray<string>,
-  trackedPaths: ReadonlySet<string>,
-): ReadonlyArray<string> {
-  const files = new Set<string>();
-  const add = (file: string) => {
-    if (!hasNodeModulesSegment(file) && isCheckInput(file) && !trackedPaths.has(file)) {
-      files.add(file);
-    }
-  };
-  const visit = (directory: string) => {
-    for (const entry of NodeFS.readdirSync(NodePath.join(root, ...directory.split("/")), {
-      withFileTypes: true,
-    })) {
-      const file = NodePath.posix.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        if (!hasNodeModulesSegment(file)) visit(file);
-      } else {
-        add(file);
-      }
-    }
-  };
+const matchingGlobs = [
+  "*.d.ts",
+  "**/*.d.ts",
+  ".env*",
+  "**/.env*",
+  ".generated/**",
+  "**/.generated/**",
+  ".astro/**",
+  "**/.astro/**",
+];
 
+export function ignoredCheckInputPathspecs(ignoredPaths: ReadonlyArray<string>) {
+  const pathspecs = new Set<string>();
   for (const path of ignoredPaths) {
-    if (path.endsWith("/")) {
-      const directory = path.slice(0, -1);
-      if (!hasNodeModulesSegment(directory)) visit(directory);
-    } else {
-      add(path);
+    if (hasNodeModulesSegment(path)) continue;
+    if (!path.endsWith("/")) {
+      if (isCheckInput(path)) pathspecs.add(`:(literal)${path}`);
+      continue;
     }
+
+    const directory = escapeGlobPath(path.slice(0, -1));
+    if ([".generated", ".astro"].includes(directory.split("/").at(-1) ?? "")) {
+      pathspecs.add(`:(glob)${directory}/**`);
+      pathspecs.add(`:(exclude,glob)${directory}/**/node_modules/**`);
+      continue;
+    }
+    for (const glob of matchingGlobs) pathspecs.add(`:(glob)${directory}/${glob}`);
+    pathspecs.add(`:(exclude,glob)${directory}/**/node_modules/**`);
   }
-  return [...files].sort();
+  return [...pathspecs];
+}
+
+export function filterIgnoredCheckInputs(paths: ReadonlyArray<string>) {
+  return paths.filter((path) => !hasNodeModulesSegment(path) && isCheckInput(path)).sort();
 }

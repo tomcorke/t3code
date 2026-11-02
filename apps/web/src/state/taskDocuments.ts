@@ -3,7 +3,11 @@ import * as Schema from "effect/Schema";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import { connectionAtomRuntime } from "../connection/runtime";
-import { getLocalStorageItem, setLocalStorageItem } from "../hooks/useLocalStorage";
+import {
+  getLocalStorageItem,
+  removeLocalStorageItem,
+  setLocalStorageItem,
+} from "../hooks/useLocalStorage";
 
 export const taskDocumentEnvironment = createTaskDocumentEnvironmentAtoms(connectionAtomRuntime);
 
@@ -22,3 +26,7 @@ const legacyTaskFolderKey = (environmentId: EnvironmentId) => `t3code:task-folde
 /** Read only to carry an existing browser preference into the server setting. */
 export const readLegacyTaskFolder = (environmentId: EnvironmentId) =>
   getLocalStorageItem(legacyTaskFolderKey(environmentId), Schema.String)?.trim() || null;
+
+/** Retire the browser preference once its value has been saved to the environment. */
+export const removeLegacyTaskFolder = (environmentId: EnvironmentId) =>
+  removeLocalStorageItem(legacyTaskFolderKey(environmentId));
