@@ -189,7 +189,7 @@ export function TaskCreateDialog(props: {
                       ? "Server settings have not loaded yet, so this folder will apply to this task only."
                       : hasSettingsWriteAccess
                         ? "This server saves this as its default when it supports the setting."
-                        : "You do not have settings write access, so this folder will apply to this task only."}
+                        : "Settings write access is unavailable or unconfirmed, so this folder will apply to this task only."}
                 </span>
               </label>
               {error ? (

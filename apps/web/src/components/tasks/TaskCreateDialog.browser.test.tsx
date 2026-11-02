@@ -11,7 +11,7 @@ const state = vi.hoisted(() => ({
   defaultFolder: vi.fn(),
   legacyFolder: null as string | null,
   configLoaded: true,
-  settingsWriteAccess: true,
+  settingsWriteStatus: "granted" as "granted" | "denied" | "loading" | "failed",
   removeLegacyFolder: vi.fn(),
   settingsFolder: "",
   updateSettings: vi.fn(),
@@ -49,7 +49,7 @@ vi.mock(import("@effect/atom-react"), async (importOriginal) => ({
       ? state.configLoaded
         ? { settings: { newTaskFolder: state.settingsFolder } }
         : null
-      : state.settingsWriteAccess) as never,
+      : state.settingsWriteStatus === "granted") as never,
 }));
 
 import { useNewTaskStore } from "~/newTaskStore";
@@ -322,7 +322,7 @@ it("keeps a folder edit made before the managed folder loads", async () => {
 it("does not use or migrate a legacy folder before server config loads", async () => {
   state.legacyFolder = "/old/client/tasks";
   state.configLoaded = false;
-  state.settingsWriteAccess = true;
+  state.settingsWriteStatus = "granted";
   state.settingsFolder = "";
   state.updateSettings.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.removeLegacyFolder.mockReset();
@@ -359,39 +359,42 @@ it("does not use or migrate a legacy folder before server config loads", async (
   expect(onClose).toHaveBeenCalledOnce();
 });
 
-it("explains the task-only folder when the user cannot update server settings", async () => {
-  state.legacyFolder = "/old/client/tasks";
-  state.configLoaded = true;
-  state.settingsWriteAccess = false;
-  state.settingsFolder = "";
-  state.updateSettings.mockReset();
-  state.defaultFolder.mockResolvedValue(AsyncResult.success({ directory: "/managed/tasks" }));
-  useNewTaskStore.setState({ byId: {} });
-  const onClose = vi.fn();
-  const onPlanned = vi.fn();
+it.each(["denied", "loading", "failed"] as const)(
+  "explains the task-only folder when settings access is %s",
+  async (settingsWriteStatus) => {
+    state.legacyFolder = "/old/client/tasks";
+    state.configLoaded = true;
+    state.settingsWriteStatus = settingsWriteStatus;
+    state.settingsFolder = "";
+    state.updateSettings.mockReset();
+    state.defaultFolder.mockResolvedValue(AsyncResult.success({ directory: "/managed/tasks" }));
+    useNewTaskStore.setState({ byId: {} });
+    const onClose = vi.fn();
+    const onPlanned = vi.fn();
 
-  await using _screen = await render(
-    <TaskCreateDialog
-      environmentId={environmentId}
-      taskDocumentId={taskDocumentId}
-      onClose={onClose}
-      onPlanned={onPlanned}
-    />,
-    { router: false },
-  );
+    await using _screen = await render(
+      <TaskCreateDialog
+        environmentId={environmentId}
+        taskDocumentId={taskDocumentId}
+        onClose={onClose}
+        onPlanned={onPlanned}
+      />,
+      { router: false },
+    );
 
-  await expect
-    .element(
-      page.getByText(
-        /You do not have settings write access, so this folder will apply to this task only\./,
-      ),
-    )
-    .toBeVisible();
-  await userEvent.type(page.getByRole("textbox", { name: "Title" }), "Use task folder{Enter}");
+    await expect
+      .element(
+        page.getByText(
+          /Settings write access is unavailable or unconfirmed, so this folder will apply to this task only\./,
+        ),
+      )
+      .toBeVisible();
+    await userEvent.type(page.getByRole("textbox", { name: "Title" }), "Use task folder{Enter}");
 
-  expect(state.updateSettings).not.toHaveBeenCalled();
-  expect(useNewTaskStore.getState().byId[taskDocumentId]?.directory).toBe("/old/client/tasks");
-  expect(onPlanned).toHaveBeenCalledOnce();
-  expect(onClose).toHaveBeenCalledOnce();
-  state.settingsWriteAccess = true;
-});
+    expect(state.updateSettings).not.toHaveBeenCalled();
+    expect(useNewTaskStore.getState().byId[taskDocumentId]?.directory).toBe("/old/client/tasks");
+    expect(onPlanned).toHaveBeenCalledOnce();
+    expect(onClose).toHaveBeenCalledOnce();
+    state.settingsWriteStatus = "granted";
+  },
+);
