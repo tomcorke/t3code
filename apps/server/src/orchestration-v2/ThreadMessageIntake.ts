@@ -52,7 +52,13 @@ function launchFailureAllowsAttachmentRelease(
   error: ThreadLaunch.ThreadLaunchError,
   threads: ThreadManagement.ThreadManagementService["Service"],
 ) {
-  if (error.operation === "resolve-project" || error.operation === "read-receipt") {
+  if (error.operation === "resolve-project") {
+    return threads.getCommandReceiptStatus(error.commandId).pipe(
+      Effect.map((status) => status === "rejected" || status === "unknown"),
+      Effect.orElseSucceed(() => false),
+    );
+  }
+  if (error.operation === "read-receipt") {
     return threads.getCommandReceiptStatus(error.commandId).pipe(
       Effect.map((status) => status === "rejected"),
       Effect.orElseSucceed(() => false),
