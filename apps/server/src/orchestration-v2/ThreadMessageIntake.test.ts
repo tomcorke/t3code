@@ -41,6 +41,7 @@ import {
   dispatchCommand,
   dispatchCommandWasNotAccepted,
   dispatchWasNotAccepted,
+  launchFailureAllowsAttachmentRelease,
   launchCommandWasNotAccepted,
 } from "./ThreadMessageIntake.ts";
 
@@ -139,6 +140,30 @@ it.effect("checks receipts before treating a projection failure as an unaccepted
         commandId,
         projectionError,
       ),
+    ).toBe(false);
+  }),
+);
+
+it.effect("retains launch attachment claims for accepted and unreadable receipts", () =>
+  Effect.gen(function* () {
+    const commandId = CommandId.make("launch-receipt-retention");
+    const error = new ThreadLaunchService.ThreadLaunchError({
+      operation: "resolve-project",
+      commandId,
+      projectId: ProjectId.make("launch-receipt-retention-project"),
+      cause: "Project identity changed.",
+    });
+
+    expect(
+      yield* launchFailureAllowsAttachmentRelease(error, {
+        getCommandReceiptStatus: () => Effect.succeed("accepted"),
+      }),
+    ).toBe(false);
+    expect(
+      yield* launchFailureAllowsAttachmentRelease(error, {
+        getCommandReceiptStatus: () =>
+          Effect.fail(new CommandReceiptStore.CommandReceiptStoreReadError({ commandId })),
+      }),
     ).toBe(false);
   }),
 );

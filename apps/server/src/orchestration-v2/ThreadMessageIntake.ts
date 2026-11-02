@@ -48,9 +48,9 @@ export function launchCommandWasNotAccepted(error: ThreadLaunch.ThreadLaunchErro
   return error.commandNotAccepted === true;
 }
 
-function launchFailureAllowsAttachmentRelease(
+export function launchFailureAllowsAttachmentRelease(
   error: ThreadLaunch.ThreadLaunchError,
-  threads: ThreadManagement.ThreadManagementService["Service"],
+  threads: Pick<ThreadManagement.ThreadManagementService["Service"], "getCommandReceiptStatus">,
 ) {
   if (error.operation === "resolve-project") {
     return threads.getCommandReceiptStatus(error.commandId).pipe(
