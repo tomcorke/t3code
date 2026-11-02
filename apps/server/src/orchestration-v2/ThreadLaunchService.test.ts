@@ -126,6 +126,7 @@ const claudeAdapter = {
 interface HarnessOptions {
   readonly openTask?: TaskDocuments.TaskDocuments["Service"]["open"];
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
+  readonly idAllocator?: Layer.Layer<IdAllocator.IdAllocatorV2>;
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
@@ -248,7 +249,7 @@ function makeHarness(options: HarnessOptions = {}) {
         layerExternalServices,
         layerThreadManagement,
         layerReceipts,
-        IdAllocator.layer,
+        options.idAllocator ?? IdAllocator.layer,
       ),
     ),
   );
@@ -287,6 +288,7 @@ function makeHarness(options: HarnessOptions = {}) {
       layerTitleRegeneration,
       layerOutbox,
       layerDatabase,
+      layerReceipts,
       layerExternalServices,
     ),
     createWorktree,
@@ -392,6 +394,152 @@ it.effect("keeps task work queued across the create-to-starter gap", () => {
       })
       .pipe(Effect.flip);
     assert.equal(stoppedStarter._tag, "OrchestratorDispatchError");
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("retries a rejected task starter on the existing thread with a fresh attempt", () => {
+  const retryCommandIds = [
+    CommandId.make("task:rejected-starter:fresh-retry-rejected"),
+    CommandId.make("task:rejected-starter:fresh-retry-accepted"),
+  ] as const;
+  let retryCommandIndex = 0;
+  const idAllocator = Layer.effect(
+    IdAllocator.IdAllocatorV2,
+    Effect.gen(function* () {
+      const ids = yield* IdAllocator.IdAllocatorV2;
+      return IdAllocator.IdAllocatorV2.of({
+        ...ids,
+        allocate: {
+          ...ids.allocate,
+          command: () => Effect.succeed(retryCommandIds[retryCommandIndex++] ?? retryCommandIds[1]),
+        },
+      });
+    }),
+  ).pipe(Layer.provide(IdAllocator.layer));
+  const harness = makeHarness({ idAllocator });
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+    const input = launchInput({
+      command: "task:rejected-starter",
+      thread: "thread:rejected-starter",
+    });
+    const taskDocumentId = TaskDocumentId.make("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    const initialization = {
+      attemptId: input.commandId,
+      messageId: MessageId.make(`${input.commandId}:task-initialization`),
+      canonicalPath: "/tasks/context.md",
+      revision: "a".repeat(64),
+      templateVersion: 1,
+      text: "Read the task and wait.",
+      workspaceStrategy: input.workspaceStrategy,
+      modelSelection,
+      runtimeMode: input.runtimeMode,
+      interactionMode: input.interactionMode,
+      title: input.title,
+    };
+    yield* threads.dispatch({
+      type: "thread.create",
+      commandId: input.commandId,
+      threadId: input.threadId,
+      projectId: input.projectId,
+      taskDocumentId,
+      taskInitialization: initialization,
+      title: input.title,
+      modelSelection,
+      runtimeMode: input.runtimeMode,
+      interactionMode: input.interactionMode,
+      branch: null,
+      worktreePath: null,
+      createdBy: input.createdBy,
+      creationSource: input.creationSource,
+    });
+    const rejectedStarterCommandId = CommandId.make(`${input.commandId}:initial-message`);
+    const rejectedRetryCommandId = CommandId.make(`${input.commandId}:starter-retry`);
+    const rejectedFreshRetryCommandId = retryCommandIds[0];
+    yield* receipts.upsert({
+      commandId: rejectedStarterCommandId,
+      threadId: input.threadId,
+      commandType: "task-initialization.start",
+      acceptedAt: DateTime.makeUnsafe("2026-06-20T00:00:00.000Z"),
+      resultSequence: 1,
+      status: "rejected",
+      error: "starter was rejected",
+    });
+    yield* receipts.upsert({
+      commandId: rejectedRetryCommandId,
+      threadId: input.threadId,
+      commandType: "task-initialization.retry",
+      acceptedAt: DateTime.makeUnsafe("2026-06-20T00:00:00.000Z"),
+      resultSequence: 1,
+      status: "rejected",
+      error: "retry command was rejected",
+    });
+    yield* receipts.upsert({
+      commandId: rejectedFreshRetryCommandId,
+      threadId: input.threadId,
+      commandType: "task-initialization.retry",
+      acceptedAt: DateTime.makeUnsafe("2026-06-20T00:00:00.000Z"),
+      resultSequence: 1,
+      status: "rejected",
+      error: "fresh retry command was rejected",
+    });
+
+    const rejectedRetry = yield* launches
+      .launch({ ...input, task: { taskDocumentId, updateInstructionsPath: "/tasks/update.md" } })
+      .pipe(Effect.result);
+    assert.isTrue(Result.isFailure(rejectedRetry));
+    if (Result.isFailure(rejectedRetry)) {
+      assert.equal(rejectedRetry.failure._tag, "ThreadLaunchError");
+      if (rejectedRetry.failure._tag === "ThreadLaunchError") {
+        assert.equal(rejectedRetry.failure.commandId, rejectedFreshRetryCommandId);
+        assert.equal(rejectedRetry.failure.threadId, input.threadId);
+        assert.isFalse(ThreadMessageIntake.launchCommandWasNotAccepted(rejectedRetry.failure));
+      }
+    }
+
+    const retried = yield* launches.launch({
+      ...input,
+      task: { taskDocumentId, updateInstructionsPath: "/tasks/update.md" },
+    });
+
+    assert.equal(retried.threadId, input.threadId);
+    assert.notEqual(retried.projection.thread.taskInitialization?.attemptId, input.commandId);
+    assert.notEqual(
+      retried.projection.thread.taskInitialization?.attemptId,
+      rejectedRetryCommandId,
+    );
+    assert.equal(retried.projection.thread.taskInitialization?.attemptId, retryCommandIds[1]);
+    assert.equal(retried.projection.messages.length, 1);
+    assert.equal(retried.projection.runs.length, 1);
+    assert.equal(
+      (yield* receipts.getByCommandId(rejectedStarterCommandId)).pipe(Option.getOrThrow).status,
+      "rejected",
+    );
+    assert.equal(
+      (yield* receipts.getByCommandId(rejectedRetryCommandId)).pipe(Option.getOrThrow).status,
+      "rejected",
+    );
+    assert.equal(
+      (yield* receipts.getByCommandId(rejectedFreshRetryCommandId)).pipe(Option.getOrThrow).status,
+      "rejected",
+    );
+    const replayed = yield* launches.launch({
+      ...input,
+      task: { taskDocumentId, updateInstructionsPath: "/tasks/update.md" },
+    });
+    assert.equal(replayed.threadId, input.threadId);
+    assert.equal(
+      replayed.projection.thread.taskInitialization?.attemptId,
+      retried.projection.thread.taskInitialization?.attemptId,
+    );
+    assert.equal(replayed.projection.messages.length, 1);
+    assert.equal(replayed.projection.runs.length, 1);
+    assert.equal(
+      (yield* threads.listProjectThreads({ projectId, includeSubagents: false })).length,
+      1,
+    );
   }).pipe(Effect.provide(harness.layer));
 });
 
@@ -2202,6 +2350,7 @@ it.effect("rejects a server-allocated launch replay with a mismatching thread id
       assert.fail(`expected ThreadLaunchError, got ${failed._tag}`);
     }
     assert.equal(failed.operation, "create-thread");
+    assert.equal(failed.commandNotAccepted, true);
     assert.include(String(failed.cause), "cannot be replayed");
   }).pipe(Effect.provide(harness.layer));
 });
@@ -2242,6 +2391,7 @@ it.effect("does not treat an unrelated accepted command receipt as a launch", ()
       assert.fail(`expected ThreadLaunchError, got ${failed._tag}`);
     }
     assert.equal(failed.operation, "create-thread");
+    assert.equal(failed.commandNotAccepted, true);
     assert.include(String(failed.cause), "cannot be replayed");
     const projection = yield* threads.getThreadProjection(threadId);
     assert.equal(projection.messages.length, 0);
@@ -2599,6 +2749,10 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       Effect.flip,
     );
     assert.equal(failed._tag, "ThreadLaunchError");
+    if (failed._tag !== "ThreadLaunchError") {
+      assert.fail(`expected ThreadLaunchError, got ${failed._tag}`);
+    }
+    assert.isFalse(ThreadMessageIntake.launchCommandWasNotAccepted(failed));
     const accepted = yield* threads.getThreadProjection(input.threadId);
     const stored = accepted.messages.find(
       (message) => message.id === input.initialMessage.messageId,
@@ -2637,6 +2791,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     assert.ok(Result.isFailure(duplicate));
     assert.ok(duplicate.failure._tag === "ThreadLaunchError");
     assert.equal(duplicate.failure.operation, "create-thread");
+    assert.isTrue(duplicate.failure.commandNotAccepted);
     assert.propertyVal(duplicate.failure.cause, "_tag", "OrchestratorThreadAlreadyExistsError");
     assert.equal((yield* claimedFiles).length, 1);
     assert.deepEqual(yield* fs.readFile(storedPath), new Uint8Array([1, 2, 3, 4]));
@@ -2648,6 +2803,10 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       projectId: ProjectId.make("missing-project"),
     }).pipe(Effect.flip);
     assert.equal(missingProject._tag, "ThreadLaunchError");
+    if (missingProject._tag !== "ThreadLaunchError") {
+      assert.fail(`expected ThreadLaunchError, got ${missingProject._tag}`);
+    }
+    assert.isFalse(ThreadMessageIntake.launchCommandWasNotAccepted(missingProject));
     assert.equal((yield* claimedFiles).length, 1);
     const missingThread = yield* ThreadMessageIntake.dispatchCommand({
       type: "message.dispatch",
@@ -2661,7 +2820,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
       creationSource: "web",
     }).pipe(Effect.flip);
     assert.equal(missingThread._tag, "OrchestratorProjectionError");
-    assert.equal((yield* claimedFiles).length, 1);
+    assert.equal((yield* claimedFiles).length, 2);
 
     const dispatch = ThreadMessageIntake.dispatchCommand({
       type: "message.dispatch",
@@ -2749,7 +2908,7 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     });
     yield* send;
     yield* send;
-    assert.equal((yield* claimedFiles).length, 4);
+    assert.equal((yield* claimedFiles).length, 5);
     const final = yield* threads.getThreadProjection(input.threadId);
     assert.equal(final.messages.length, 3);
     for (const message of final.messages) {

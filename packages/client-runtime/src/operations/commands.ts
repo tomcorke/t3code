@@ -172,6 +172,7 @@ interface StartThreadBootstrap {
 }
 
 export interface StartThreadTurnInput extends ThreadCommandInput {
+  readonly taskWorkCommandId?: CommandId;
   readonly manualContinuationOfRunId?: RunId;
   readonly message: {
     readonly messageId: MessageId;
@@ -752,7 +753,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     if (task === undefined) return launch;
     return yield* dispatch({
       type: "message.dispatch",
-      commandId: CommandId.make(`${commandId}:task-work`),
+      commandId: input.taskWorkCommandId ?? CommandId.make(`${commandId}:task-work`),
       threadId: input.threadId,
       messageId: input.message.messageId,
       createdBy: "user",

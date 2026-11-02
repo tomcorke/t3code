@@ -19,6 +19,7 @@ import {
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import {
   defaultInstanceIdForDriver,
+  CommandId,
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
   EnvironmentId,
@@ -1266,6 +1267,81 @@ describe("composerDraftStore project draft thread mapping", () => {
     store.setDraftThreadContext(draftId, { taskDocumentId });
     store.setDraftThreadContext(draftId, { projectRef });
     expect(store.getDraftThread(draftId)?.taskDocumentId).toBeNull();
+  });
+
+  it("persists the task-work retry id and clears it when a rejected launch gets a new thread", () => {
+    const options = useComposerDraftStore.persist.getOptions() as unknown as {
+      merge: (
+        persisted: unknown,
+        current: unknown,
+      ) => ReturnType<typeof useComposerDraftStore.getState>;
+    };
+    const retryId = CommandId.make("thread-task-work:retry-1");
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setDraftThreadContext(draftId, { taskWorkCommandId: retryId });
+    expect(store.getDraftThread(draftId)?.taskWorkCommandId).toBe(retryId);
+
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    expect(persisted.draftThreadsByThreadKey[draftId]?.taskWorkCommandId).toBe(retryId);
+    expect(
+      options.merge(JSON.parse(JSON.stringify(persisted)), useComposerDraftStore.getState())
+        .draftThreadsByThreadKey[draftId]?.taskWorkCommandId,
+    ).toBe(retryId);
+
+    const sent = useComposerDraftStore.getState().getDraftSession(draftId)!;
+    restoreFailedDraftThread(draftId, sent, ThreadId.make("retry-thread"));
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)?.taskWorkCommandId).toBeNull();
+  });
+
+  it("starts a new task launch when changing tasks after a rejected work command", () => {
+    const store = useComposerDraftStore.getState();
+    const firstTaskId = TaskDocumentId.make("11111111-1111-4111-8111-111111111111");
+    const nextTaskId = TaskDocumentId.make("22222222-2222-4222-8222-222222222222");
+    const rejectedWorkCommandId = CommandId.make("thread-task-work:rejected");
+    const nextThreadId = ThreadId.make("thread-task-work:next-task");
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setDraftThreadContext(draftId, {
+      taskDocumentId: firstTaskId,
+      taskWorkCommandId: rejectedWorkCommandId,
+    });
+
+    store.setDraftThreadContext(draftId, {
+      taskDocumentId: nextTaskId,
+      threadId: nextThreadId,
+      taskWorkCommandId: null,
+    });
+
+    expect(store.getDraftSession(draftId)).toMatchObject({
+      threadId: nextThreadId,
+      taskDocumentId: nextTaskId,
+      taskWorkCommandId: null,
+    });
+  });
+
+  it("starts a new task launch when the project task action changes a draft", () => {
+    const store = useComposerDraftStore.getState();
+    const firstTaskId = TaskDocumentId.make("11111111-1111-4111-8111-111111111111");
+    const nextTaskId = TaskDocumentId.make("22222222-2222-4222-8222-222222222222");
+    const rejectedWorkCommandId = CommandId.make("thread-task-work:rejected");
+    const nextThreadId = ThreadId.make("thread-task-work:project-action");
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setDraftThreadContext(draftId, {
+      taskDocumentId: firstTaskId,
+      taskWorkCommandId: rejectedWorkCommandId,
+    });
+
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId: nextThreadId,
+      taskDocumentId: nextTaskId,
+      taskWorkCommandId: null,
+    });
+
+    expect(store.getDraftSession(draftId)).toMatchObject({
+      threadId: nextThreadId,
+      taskDocumentId: nextTaskId,
+      taskWorkCommandId: null,
+    });
   });
 
   it("pins manual workspace choices and can return to automatic routing without losing the prompt", () => {

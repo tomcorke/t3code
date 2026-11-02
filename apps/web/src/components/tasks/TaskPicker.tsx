@@ -13,7 +13,7 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { useComposerDraftStore, type DraftId } from "~/composerDraftStore";
-import { randomUUID } from "~/lib/utils";
+import { randomUUID, taskChangeRetryIdentity } from "~/lib/utils";
 import { useNewTaskStore } from "~/newTaskStore";
 
 import { TaskCreateDialog } from "./TaskCreateDialog";
@@ -41,7 +41,8 @@ export function TaskPicker(props: {
   const select = (taskDocumentId: TaskDocumentId | null) => {
     if (props.taskDocumentId !== null && props.taskDocumentId !== taskDocumentId)
       forgetPlan(props.taskDocumentId);
-    setDraftThreadContext(props.draftId, { taskDocumentId });
+    const retryIdentity = taskChangeRetryIdentity(props.taskDocumentId, taskDocumentId);
+    setDraftThreadContext(props.draftId, { taskDocumentId, ...retryIdentity });
   };
   const selected = tasks.find((task) => task.taskDocumentId === props.taskDocumentId);
   const label =

@@ -17,6 +17,8 @@ const testState = vi.hoisted(() => {
     readonly environmentId: string;
     readonly promotedTo: null;
     readonly threadId: string;
+    readonly taskDocumentId?: string | null;
+    readonly taskWorkCommandId?: string | null;
   } | null = null;
   let openDraftRoute: { readonly kind: "draft"; readonly draftId: string } | null = null;
   let draftsWithUserText = new Set<string>();
@@ -207,6 +209,14 @@ vi.mock("../lib/t3ProjectFileDefaults", () => ({
 vi.mock("../lib/utils", () => ({
   newDraftId: () => "draft-delayed",
   newThreadId: () => "thread-delayed",
+  taskChangeRetryIdentity: (
+    currentTask: string | null | undefined,
+    workCommand: string | null | undefined,
+    nextTask: string | null | undefined,
+  ) =>
+    (currentTask ?? null) !== (nextTask ?? null) && workCommand != null
+      ? { threadId: "thread-delayed", taskWorkCommandId: null }
+      : undefined,
 }));
 vi.mock("@t3tools/client-runtime/state/project-grouping", () => ({
   deriveLogicalProjectKeyFromSettings: () => "remote-project",
@@ -336,6 +346,44 @@ describe("useNewThreadHandler", () => {
     expect(testState.draftStore.setPrompt).not.toHaveBeenCalled();
   });
 
+  it("retries a different task with a fresh identity in a raced draft", async () => {
+    const nextTask = "22222222-2222-4222-8222-222222222222";
+    const raced = {
+      draftId: "draft-raced",
+      environmentId: "environment-ssh",
+      promotedTo: null,
+      threadId: "thread-raced",
+      taskDocumentId: "11111111-1111-4111-8111-111111111111",
+      taskWorkCommandId: "thread-task-work:rejected",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    };
+    testState.reset(null);
+    testState.draftStore.getDraftSessionByLogicalProjectKey
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(raced as never);
+    testState.draftStore.getDraftSession.mockReturnValueOnce({
+      threadId: "thread-delayed",
+    } as never);
+
+    const pendingOpen = useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { taskDocumentId: nextTask as never },
+    );
+    testState.completeProjectFileRead(null);
+    const opened = await pendingOpen;
+
+    expect(testState.draftStore.setLogicalProjectDraftThreadId.mock.lastCall?.at(-1)).toMatchObject(
+      {
+        threadId: "thread-delayed",
+        taskDocumentId: nextTask,
+        taskWorkCommandId: null,
+      },
+    );
+    expect(opened).toMatchObject({ draftId: "draft-raced", threadId: "thread-delayed" });
+  });
+
   it("starts every new thread with no task unless a task action asks for one", async () => {
     const handler = useNewThreadHandler();
     const project = { environmentId: "environment-ssh", projectId: "project-remote" } as never;
@@ -366,6 +414,35 @@ describe("useNewThreadHandler", () => {
     expect(testState.draftStore.setDraftThreadContext).toHaveBeenLastCalledWith("draft-stored", {
       taskDocumentId: null,
     });
+  });
+
+  it("retries a different task with a fresh identity when reusing a stored draft", async () => {
+    const nextTask = "22222222-2222-4222-8222-222222222222";
+    testState.reset({
+      draftId: "draft-stored",
+      environmentId: "environment-ssh",
+      promotedTo: null,
+      threadId: "thread-stored",
+      taskDocumentId: "11111111-1111-4111-8111-111111111111",
+      taskWorkCommandId: "thread-task-work:rejected",
+    });
+    testState.draftStore.getDraftSession.mockReturnValueOnce({
+      threadId: "thread-delayed",
+    } as never);
+
+    const pendingOpen = useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { taskDocumentId: nextTask as never },
+    );
+    testState.completeProjectFileRead(null);
+    const opened = await pendingOpen;
+
+    expect(testState.draftStore.setDraftThreadContext).toHaveBeenCalledWith("draft-stored", {
+      taskDocumentId: nextTask,
+      threadId: "thread-delayed",
+      taskWorkCommandId: null,
+    });
+    expect(opened?.threadId).toBe("thread-delayed");
   });
 
   it("seeds the prompt into the empty draft that is already open", async () => {

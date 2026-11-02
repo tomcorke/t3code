@@ -430,6 +430,12 @@ export interface ThreadManagementServiceShape {
   }) => Effect.Effect<boolean>;
   /** Receipt replays start no work; skip enablement checks with the same command id so settings cannot reject accepted retries. */
   readonly hasReceipt: (commandId: CommandId) => Effect.Effect<boolean>;
+  readonly getCommandReceiptStatus: (
+    commandId: CommandId,
+  ) => Effect.Effect<
+    CommandReceiptStore.CommandReceiptV2Status | "unknown",
+    CommandReceiptStore.CommandReceiptStoreV2Error
+  >;
   readonly waitForThread: (
     input: ThreadManagementWaitInput,
   ) => Effect.Effect<ThreadManagementWaitResult, ThreadManagementError>;
@@ -587,10 +593,22 @@ const make = Effect.gen(function* () {
         ),
       );
 
-  const hasReceipt: ThreadManagementServiceShape["hasReceipt"] = (commandId) =>
+  const getCommandReceiptStatus: ThreadManagementServiceShape["getCommandReceiptStatus"] = (
+    commandId,
+  ) =>
     receipts.getByCommandId(commandId).pipe(
-      Effect.orElseSucceed(() => Option.none()),
-      Effect.map(Option.isSome),
+      Effect.map(
+        Option.match({
+          onNone: () => "unknown" as const,
+          onSome: (receipt) => receipt.status,
+        }),
+      ),
+    );
+
+  const hasReceipt: ThreadManagementServiceShape["hasReceipt"] = (commandId) =>
+    getCommandReceiptStatus(commandId).pipe(
+      Effect.orElseSucceed(() => "unknown" as const),
+      Effect.map((status) => status !== "unknown"),
     );
 
   const ensureLegacyTranscript = Effect.fn(
@@ -1353,6 +1371,7 @@ const make = Effect.gen(function* () {
     assertProviderInstanceEnabled,
     isProviderInstanceEnabledForProject,
     hasReceipt,
+    getCommandReceiptStatus,
     waitForThread,
     settleAfterRun,
     settleThread,

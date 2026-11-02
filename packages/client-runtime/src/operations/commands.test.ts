@@ -351,6 +351,61 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
+  it.effect("keeps the accepted task launch id while retrying rejected task work", () =>
+    Effect.gen(function* () {
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        launches,
+        advertiseTaskDocuments: true,
+      });
+      const launchCommandId = CommandId.make(`${v2ThreadId}:task-launch`);
+      const taskWorkCommandId = CommandId.make(`${v2ThreadId}:task-work:retry-1`);
+
+      yield* startThreadTurn({
+        commandId: launchCommandId,
+        taskWorkCommandId,
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-task-work-retry"),
+          role: "user",
+          text: "Continue here",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          task: {
+            taskDocumentId: TaskDocumentId.make("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            updateInstructionsPath: "/tasks/update.md",
+          },
+          createThread: {
+            projectId: ProjectId.make("project-1"),
+            title: "Thread",
+            modelSelection: v2Projection.thread.modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-06-20T00:00:00.000Z",
+          },
+        },
+      }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
+      );
+
+      expect(launches.at(-1)?.commandId).toBe(launchCommandId);
+      expect(commands.at(-1)).toMatchObject({
+        type: "message.dispatch",
+        commandId: taskWorkCommandId,
+        dispatchMode: { type: "queue_after_active" },
+      });
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect("creates a new task's file before launch, and a failure stops the launch", () =>
     Effect.gen(function* () {
       const launches: OrchestrationV2ThreadLaunchInput[] = [];

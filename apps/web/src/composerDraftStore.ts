@@ -3,6 +3,7 @@ import { composerFileAttachmentMimeType } from "./components/chat/composerAttach
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
   ElementContextDetails,
+  CommandId,
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
@@ -316,6 +317,7 @@ const PersistedDraftThreadState = Schema.Struct({
   envMode: DraftThreadEnvModeSchema,
   startFromOrigin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   taskDocumentId: Schema.optionalKey(Schema.NullOr(TaskDocumentId)),
+  taskWorkCommandId: Schema.optionalKey(Schema.NullOr(CommandId)),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -396,6 +398,7 @@ export function composerDraftHasUserContent(
 }
 
 const isTaskDocumentId = Schema.is(TaskDocumentId);
+const isCommandId = Schema.is(CommandId);
 
 export interface DraftSessionState {
   threadId: ThreadId;
@@ -412,6 +415,7 @@ export interface DraftSessionState {
   envMode: DraftThreadEnvMode;
   startFromOrigin: boolean;
   taskDocumentId?: TaskDocumentId | null;
+  taskWorkCommandId?: CommandId | null;
   promotedTo?: ScopedThreadRef | null;
 }
 
@@ -463,6 +467,7 @@ interface ComposerDraftStoreState {
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
       taskDocumentId?: TaskDocumentId | null;
+      taskWorkCommandId?: CommandId | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -480,6 +485,7 @@ interface ComposerDraftStoreState {
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
       taskDocumentId?: TaskDocumentId | null;
+      taskWorkCommandId?: CommandId | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -489,6 +495,7 @@ interface ComposerDraftStoreState {
   setDraftThreadContext: (
     threadRef: ComposerThreadTarget,
     options: {
+      threadId?: ThreadId;
       branch?: string | null;
       worktreePath?: string | null;
       projectRef?: ScopedProjectRef;
@@ -496,6 +503,7 @@ interface ComposerDraftStoreState {
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
       taskDocumentId?: TaskDocumentId | null;
+      taskWorkCommandId?: CommandId | null;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -1422,6 +1430,7 @@ function createDraftThreadState(
     envMode?: DraftThreadEnvMode;
     startFromOrigin?: boolean;
     taskDocumentId?: TaskDocumentId | null;
+    taskWorkCommandId?: CommandId | null;
     runtimeMode?: RuntimeMode;
     interactionMode?: ProviderInteractionMode;
     environmentSelection?: "auto" | "manual";
@@ -1481,6 +1490,12 @@ function createDraftThreadState(
         : existingThread?.environmentId === projectRef.environmentId
           ? (existingThread.taskDocumentId ?? null)
           : null,
+    ...(options?.taskWorkCommandId !== undefined
+      ? { taskWorkCommandId: options.taskWorkCommandId }
+      : existingThread?.environmentId === projectRef.environmentId &&
+          existingThread.taskWorkCommandId !== undefined
+        ? { taskWorkCommandId: existingThread.taskWorkCommandId }
+        : {}),
     promotedTo: null,
   };
 }
@@ -1516,6 +1531,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.envMode === right.envMode &&
     left.startFromOrigin === right.startFromOrigin &&
     (left.taskDocumentId ?? null) === (right.taskDocumentId ?? null) &&
+    (left.taskWorkCommandId ?? null) === (right.taskWorkCommandId ?? null) &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
 }
@@ -1666,6 +1682,9 @@ function normalizePersistedDraftThreads(
         startFromOrigin,
         ...(isTaskDocumentId(candidateDraftThread.taskDocumentId)
           ? { taskDocumentId: candidateDraftThread.taskDocumentId }
+          : {}),
+        ...(isCommandId(candidateDraftThread.taskWorkCommandId)
+          ? { taskWorkCommandId: candidateDraftThread.taskWorkCommandId }
           : {}),
         ...(candidateDraftThread.environmentSelection === "manual" ||
         candidateDraftThread.environmentSelection === "auto"
@@ -2420,6 +2439,9 @@ function toHydratedDraftThreadState(
     envMode: persistedDraftThread.envMode,
     startFromOrigin: persistedDraftThread.startFromOrigin,
     taskDocumentId: persistedDraftThread.taskDocumentId ?? null,
+    ...(persistedDraftThread.taskWorkCommandId
+      ? { taskWorkCommandId: persistedDraftThread.taskWorkCommandId }
+      : {}),
     ...(persistedDraftThread.environmentSelection
       ? { environmentSelection: persistedDraftThread.environmentSelection }
       : {}),
@@ -2689,7 +2711,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 ? "manual"
                 : existing.environmentSelection);
             const nextDraftThread: DraftThreadState = {
-              threadId: existing.threadId,
+              threadId: options.threadId ?? existing.threadId,
               environmentId: nextProjectRef.environmentId,
               projectId: nextProjectRef.projectId,
               logicalProjectKey: existing.logicalProjectKey,
@@ -2702,7 +2724,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                   : options.loadBalancedEnvironmentId,
               createdAt:
                 options.createdAt === undefined
-                  ? existing.createdAt
+                  ? options.threadId === undefined || options.threadId === existing.threadId
+                    ? existing.createdAt
+                    : new Date().toISOString()
                   : options.createdAt || existing.createdAt,
               runtimeMode: options.runtimeMode ?? existing.runtimeMode,
               interactionMode: options.interactionMode ?? existing.interactionMode,
@@ -2717,9 +2741,15 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                   : nextProjectRef.environmentId === existing.environmentId
                     ? (existing.taskDocumentId ?? null)
                     : null,
+              ...(options.taskWorkCommandId !== undefined
+                ? { taskWorkCommandId: options.taskWorkCommandId }
+                : existing.taskWorkCommandId !== undefined
+                  ? { taskWorkCommandId: existing.taskWorkCommandId }
+                  : {}),
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =
+              nextDraftThread.threadId === existing.threadId &&
               nextDraftThread.environmentId === existing.environmentId &&
               nextDraftThread.projectId === existing.projectId &&
               nextDraftThread.logicalProjectKey === existing.logicalProjectKey &&
@@ -2733,6 +2763,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.envMode === existing.envMode &&
               nextDraftThread.startFromOrigin === existing.startFromOrigin &&
               (nextDraftThread.taskDocumentId ?? null) === (existing.taskDocumentId ?? null) &&
+              (nextDraftThread.taskWorkCommandId ?? null) ===
+                (existing.taskWorkCommandId ?? null) &&
               scopedThreadRefsEqual(nextDraftThread.promotedTo, existing.promotedTo);
             if (isUnchanged) {
               return state;
@@ -4397,6 +4429,7 @@ export function restoreFailedDraftThread(
   draftId: DraftId,
   draftThread: DraftThreadState,
   threadId: ThreadId,
+  options?: { taskWorkCommandId?: CommandId | null },
 ): void {
   useComposerDraftStore.setState((state) => ({
     draftThreadsByThreadKey: {
@@ -4405,6 +4438,11 @@ export function restoreFailedDraftThread(
         ...(state.draftThreadsByThreadKey[draftId] ?? draftThread),
         threadId,
         ...(threadId !== draftThread.threadId ? { createdAt: new Date().toISOString() } : {}),
+        ...(options?.taskWorkCommandId !== undefined
+          ? { taskWorkCommandId: options.taskWorkCommandId }
+          : threadId !== draftThread.threadId
+            ? { taskWorkCommandId: null }
+            : {}),
         promotedTo: null,
       },
     },
