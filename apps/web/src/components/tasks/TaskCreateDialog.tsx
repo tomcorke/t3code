@@ -1,6 +1,6 @@
 import type { EnvironmentId, TaskDocumentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useEffectEvent, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
@@ -16,7 +16,7 @@ import {
 import { Input } from "~/components/ui/input";
 import { Textarea } from "~/components/ui/textarea";
 import { useNewTaskStore, type NewTaskPlan } from "~/newTaskStore";
-import { taskDocumentEnvironment } from "~/state/taskDocuments";
+import { readLegacyTaskFolder, taskDocumentEnvironment } from "~/state/taskDocuments";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -37,9 +37,15 @@ export function TaskCreateDialog(props: {
   const canUpdateSettings = useAtomValue(
     serverEnvironment.updateSettings.permissionAtom(props.environmentId),
   );
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
+  const serverFolderSetting = serverConfig?.settings.newTaskFolder.trim() || null;
   const [title, setTitle] = useState(existing?.title ?? "");
   const [description, setDescription] = useState(existing?.description ?? "");
-  const [folder, setFolder] = useState(() => existing?.directory ?? "");
+  const [folder, setFolder] = useState(
+    () =>
+      existing?.directory ?? serverFolderSetting ?? readLegacyTaskFolder(props.environmentId) ?? "",
+  );
+  const folderTouched = useRef(existing?.directory !== null && existing?.directory !== undefined);
   const [enrich, setEnrich] = useState(existing?.enrich ?? true);
   const [serverFolder, setServerFolder] = useState<string | null>(null);
 
@@ -52,13 +58,19 @@ export function TaskCreateDialog(props: {
     void fetchServerFolder(props.environmentId).then((result) => {
       if (current && result._tag === "Success") {
         setServerFolder(result.value.directory);
-        setFolder((currentFolder) => currentFolder || result.value.directory);
+        setFolder((currentFolder) =>
+          folderTouched.current
+            ? currentFolder
+            : (serverFolderSetting ??
+              readLegacyTaskFolder(props.environmentId) ??
+              result.value.directory),
+        );
       }
     });
     return () => {
       current = false;
     };
-  }, [props.environmentId]);
+  }, [props.environmentId, serverFolderSetting]);
 
   const destination = folder.trim() || serverFolder;
   const submit = async () => {
@@ -122,7 +134,10 @@ export function TaskCreateDialog(props: {
                 <Input
                   value={folder}
                   placeholder={serverFolder ?? "Managed folder"}
-                  onChange={(event) => setFolder(event.target.value)}
+                  onChange={(event) => {
+                    folderTouched.current = true;
+                    setFolder(event.target.value);
+                  }}
                 />
                 <span className="text-muted-foreground text-xs">
                   Creates the file in {destination ?? "the environment's managed folder"}.{" "}

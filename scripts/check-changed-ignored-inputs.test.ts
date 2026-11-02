@@ -26,6 +26,7 @@ it("preserves eligible ignored cache inputs while pruning node_modules", () => {
     write(".env-cache/private.txt");
     write("cache/readme.txt");
     write("node_modules/package/types.d.ts");
+    write("cache/node_modules/nested-package/types.d.ts");
     write("cache/tracked.d.ts");
     git("add", "-f", "cache/tracked.d.ts");
     const previous = git(
@@ -58,6 +59,9 @@ it("preserves eligible ignored cache inputs while pruning node_modules", () => {
       .filter(Boolean);
     const tracked = new Set(git("ls-files", "--cached").split("\n").filter(Boolean));
     expect(collectIgnoredCheckInputs(root, collapsed, tracked)).toEqual(previous);
+    expect(
+      collectIgnoredCheckInputs(root, [...collapsed, "node_modules/package/"], tracked),
+    ).toEqual(previous);
     expect(previous).toEqual([
       ".env.local",
       "apps/mobile/.generated/source.js",

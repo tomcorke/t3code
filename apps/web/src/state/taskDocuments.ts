@@ -16,3 +16,9 @@ export const readTaskUpdateInstructionsPath = (environmentId: EnvironmentId) =>
 
 export const writeTaskUpdateInstructionsPath = (environmentId: EnvironmentId, path: string) =>
   setLocalStorageItem(updateInstructionsKey(environmentId), path.trim(), Schema.String);
+
+const legacyTaskFolderKey = (environmentId: EnvironmentId) => `t3code:task-folder:${environmentId}`;
+
+/** Read only to carry an existing browser preference into the server setting. */
+export const readLegacyTaskFolder = (environmentId: EnvironmentId) =>
+  getLocalStorageItem(legacyTaskFolderKey(environmentId), Schema.String)?.trim() || null;

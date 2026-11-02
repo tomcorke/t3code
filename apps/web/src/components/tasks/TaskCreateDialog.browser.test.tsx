@@ -8,6 +8,8 @@ import { render } from "../../../test/render";
 const state = vi.hoisted(() => ({
   create: vi.fn(),
   defaultFolder: vi.fn(),
+  legacyFolder: null as string | null,
+  settingsFolder: "",
   updateSettings: vi.fn(),
 }));
 
@@ -16,6 +18,7 @@ vi.mock(import("~/state/taskDocuments"), () => ({
     create: { name: "create" },
     defaultFolder: { name: "defaultFolder" },
   } as never,
+  readLegacyTaskFolder: () => state.legacyFolder,
 }));
 vi.mock(import("~/state/use-atom-command"), () => ({
   useAtomCommand: ((command: { name: "create" | "defaultFolder" | "updateSettings" }) =>
@@ -27,12 +30,16 @@ vi.mock(
     ({
       serverEnvironment: {
         updateSettings: { name: "updateSettings", permissionAtom: () => "permission" },
+        configValueAtom: () => "serverConfig",
       },
     }) as never,
 );
 vi.mock(import("@effect/atom-react"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useAtomValue: () => true,
+  useAtomValue: ((atom: unknown) =>
+    atom === "serverConfig"
+      ? { settings: { newTaskFolder: state.settingsFolder } }
+      : true) as never,
 }));
 
 import { useNewTaskStore } from "~/newTaskStore";
@@ -42,6 +49,10 @@ const environmentId = EnvironmentId.make("create-dialog");
 const taskDocumentId = TaskDocumentId.make("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
 
 it("plans a new task without writing a file, and cancelling plans nothing", async () => {
+  state.legacyFolder = "/old/client/tasks";
+  state.settingsFolder = "";
+  state.updateSettings.mockReset();
+  useNewTaskStore.setState({ byId: {} });
   state.defaultFolder.mockResolvedValue(AsyncResult.success({ directory: "/managed/tasks" }));
   const onClose = vi.fn();
   const onPlanned = vi.fn();
@@ -58,7 +69,7 @@ it("plans a new task without writing a file, and cancelling plans nothing", asyn
   await expect
     .element(
       page.getByText(
-        /Creates the file in \/managed\/tasks\. Changes are saved as this server's default\./,
+        /Creates the file in \/old\/client\/tasks\. Changes are saved as this server's default\./,
       ),
     )
     .toBeVisible();
@@ -77,7 +88,7 @@ it("plans a new task without writing a file, and cancelling plans nothing", asyn
     [taskDocumentId]: {
       title: "Ship it",
       description: "Plan the release",
-      directory: "/managed/tasks",
+      directory: "/old/client/tasks",
       enrich: true,
     },
   });
@@ -85,6 +96,51 @@ it("plans a new task without writing a file, and cancelling plans nothing", asyn
   expect(state.create).not.toHaveBeenCalled();
   expect(state.updateSettings).toHaveBeenCalledWith({
     environmentId,
-    input: { patch: { newTaskFolder: "/managed/tasks" } },
+    input: { patch: { newTaskFolder: "/old/client/tasks" } },
   });
+});
+
+it("prefers the environment folder over a legacy browser preference", async () => {
+  state.legacyFolder = "/old/client/tasks";
+  state.settingsFolder = "/server/tasks";
+  state.defaultFolder.mockResolvedValue(AsyncResult.success({ directory: "/server/tasks" }));
+  const onClose = vi.fn();
+  const onPlanned = vi.fn();
+  await using _screen = await render(
+    <TaskCreateDialog
+      environmentId={environmentId}
+      taskDocumentId={TaskDocumentId.make("dddddddd-dddd-4ddd-8ddd-dddddddddddd")}
+      onClose={onClose}
+      onPlanned={onPlanned}
+    />,
+    { router: false },
+  );
+
+  await expect.element(page.getByRole("textbox", { name: /Folder/ })).toHaveValue("/server/tasks");
+});
+
+it("keeps a folder edit made before the managed folder loads", async () => {
+  state.legacyFolder = null;
+  state.settingsFolder = "";
+  let resolveDefaultFolder!: (value: unknown) => void;
+  state.defaultFolder.mockReturnValue(
+    new Promise<unknown>((resolve) => {
+      resolveDefaultFolder = resolve;
+    }),
+  );
+  await using _screen = await render(
+    <TaskCreateDialog
+      environmentId={environmentId}
+      taskDocumentId={TaskDocumentId.make("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")}
+      onClose={vi.fn()}
+      onPlanned={vi.fn()}
+    />,
+    { router: false },
+  );
+
+  const folder = page.getByRole("textbox", { name: /Folder/ });
+  await userEvent.type(folder, "/chosen/tasks");
+  resolveDefaultFolder(AsyncResult.success({ directory: "/managed/tasks" }));
+
+  await expect.element(folder).toHaveValue("/chosen/tasks");
 });

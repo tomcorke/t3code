@@ -6,6 +6,7 @@ const isCheckInput = (file: string) =>
   file.endsWith(".d.ts") ||
   NodePath.posix.basename(file).startsWith(".env") ||
   file.split("/").some((part) => part === ".generated" || part === ".astro");
+const hasNodeModulesSegment = (file: string) => file.split("/").includes("node_modules");
 
 export function collectIgnoredCheckInputs(
   root: string,
@@ -14,7 +15,9 @@ export function collectIgnoredCheckInputs(
 ): ReadonlyArray<string> {
   const files = new Set<string>();
   const add = (file: string) => {
-    if (isCheckInput(file) && !trackedPaths.has(file)) files.add(file);
+    if (!hasNodeModulesSegment(file) && isCheckInput(file) && !trackedPaths.has(file)) {
+      files.add(file);
+    }
   };
   const visit = (directory: string) => {
     for (const entry of NodeFS.readdirSync(NodePath.join(root, ...directory.split("/")), {
@@ -22,7 +25,7 @@ export function collectIgnoredCheckInputs(
     })) {
       const file = NodePath.posix.join(directory, entry.name);
       if (entry.isDirectory()) {
-        if (entry.name !== "node_modules") visit(file);
+        if (!hasNodeModulesSegment(file)) visit(file);
       } else {
         add(file);
       }
@@ -32,7 +35,7 @@ export function collectIgnoredCheckInputs(
   for (const path of ignoredPaths) {
     if (path.endsWith("/")) {
       const directory = path.slice(0, -1);
-      if (NodePath.posix.basename(directory) !== "node_modules") visit(directory);
+      if (!hasNodeModulesSegment(directory)) visit(directory);
     } else {
       add(path);
     }
