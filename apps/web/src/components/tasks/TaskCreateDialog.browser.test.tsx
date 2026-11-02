@@ -62,7 +62,9 @@ it("plans a new task without writing a file, and cancelling plans nothing", asyn
   state.settingsFolder = "";
   state.updateSettings.mockReset();
   state.removeLegacyFolder.mockReset();
-  state.updateSettings.mockResolvedValue(AsyncResult.success(undefined));
+  state.updateSettings.mockResolvedValue(
+    AsyncResult.success({ newTaskFolder: "/old/client/tasks", newTaskFolderPersisted: true }),
+  );
   useNewTaskStore.setState({ byId: {} });
   state.defaultFolder.mockResolvedValue(AsyncResult.success({ directory: "/managed/tasks" }));
   const onClose = vi.fn();
@@ -116,7 +118,9 @@ it("retires a legacy folder preference after successfully clearing the server de
   state.legacyFolder = "/old/client/tasks";
   state.settingsFolder = "";
   state.removeLegacyFolder.mockReset();
-  state.updateSettings.mockResolvedValue(AsyncResult.success(undefined));
+  state.updateSettings.mockResolvedValue(
+    AsyncResult.success({ newTaskFolder: "", newTaskFolderPersisted: true }),
+  );
   state.defaultFolder.mockResolvedValue(AsyncResult.success({ directory: "/managed/tasks" }));
   useNewTaskStore.setState({ byId: {} });
   const onClose = vi.fn();
@@ -190,6 +194,75 @@ it("keeps the dialog open and does not plan a task when saving the server defaul
   expect(useNewTaskStore.getState().byId).toEqual({});
   expect(state.removeLegacyFolder).not.toHaveBeenCalled();
   expect(state.legacyFolder).toBe("/old/client/tasks");
+});
+
+it("keeps the legacy folder when an older server does not confirm the new setting", async () => {
+  state.legacyFolder = "/old/client/tasks";
+  state.settingsFolder = "";
+  state.updateSettings.mockResolvedValue(AsyncResult.success({ newTaskFolder: "" }));
+  state.removeLegacyFolder.mockReset();
+  state.defaultFolder.mockResolvedValue(AsyncResult.success({ directory: "/managed/tasks" }));
+  useNewTaskStore.setState({ byId: {} });
+  const onClose = vi.fn();
+  const onPlanned = vi.fn();
+
+  await using _screen = await render(
+    <TaskCreateDialog
+      environmentId={environmentId}
+      taskDocumentId={taskDocumentId}
+      onClose={onClose}
+      onPlanned={onPlanned}
+    />,
+    { router: false },
+  );
+  await userEvent.type(page.getByRole("textbox", { name: "Title" }), "Keep compatibility{Enter}");
+
+  expect(state.removeLegacyFolder).not.toHaveBeenCalled();
+  expect(state.legacyFolder).toBe("/old/client/tasks");
+  expect(useNewTaskStore.getState().byId[taskDocumentId]?.directory).toBe("/old/client/tasks");
+  expect(onPlanned).toHaveBeenCalledOnce();
+  expect(onClose).toHaveBeenCalledOnce();
+});
+
+it("blocks dismissal while saving the server default", async () => {
+  state.legacyFolder = "/old/client/tasks";
+  state.settingsFolder = "";
+  let resolveUpdateSettings!: (value: unknown) => void;
+  state.updateSettings.mockReturnValue(
+    new Promise<unknown>((resolve) => {
+      resolveUpdateSettings = resolve;
+    }),
+  );
+  state.removeLegacyFolder.mockReset();
+  state.defaultFolder.mockResolvedValue(AsyncResult.success({ directory: "/managed/tasks" }));
+  useNewTaskStore.setState({ byId: {} });
+  const onClose = vi.fn();
+  const onPlanned = vi.fn();
+
+  await using _screen = await render(
+    <TaskCreateDialog
+      environmentId={environmentId}
+      taskDocumentId={taskDocumentId}
+      onClose={onClose}
+      onPlanned={onPlanned}
+    />,
+    { router: false },
+  );
+  await userEvent.type(page.getByRole("textbox", { name: "Title" }), "Cancel pending save{Enter}");
+  await userEvent.keyboard("{Escape}");
+  expect(onClose).not.toHaveBeenCalled();
+  await expect.element(page.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  await expect.element(page.getByRole("button", { name: "Saving…" })).toBeDisabled();
+
+  resolveUpdateSettings(
+    AsyncResult.success({ newTaskFolder: "/old/client/tasks", newTaskFolderPersisted: true }),
+  );
+  await Promise.resolve();
+
+  expect(state.removeLegacyFolder).toHaveBeenCalledOnce();
+  expect(useNewTaskStore.getState().byId[taskDocumentId]?.directory).toBe("/old/client/tasks");
+  expect(onPlanned).toHaveBeenCalledOnce();
+  expect(onClose).toHaveBeenCalledOnce();
 });
 
 it("prefers the environment folder over a legacy browser preference", async () => {

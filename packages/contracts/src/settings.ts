@@ -1413,6 +1413,12 @@ export const ServerSettings = Schema.Struct({
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
+export const ServerSettingsUpdateResult = Schema.Struct({
+  ...ServerSettings.fields,
+  newTaskFolderPersisted: Schema.optionalKey(Schema.Boolean),
+});
+export type ServerSettingsUpdateResult = typeof ServerSettingsUpdateResult.Type;
+
 export const DEFAULT_SERVER_SETTINGS: ServerSettings = Schema.decodeSync(ServerSettings)({});
 
 export const providerInstanceConfigEnabledFlag = (config: unknown): boolean | undefined => {

@@ -2529,7 +2529,13 @@ export const layerWsRpc = (
             const settings = yield* providerInstanceMutation === undefined
               ? serverSettings.updateSettings(nextPatch)
               : serverSettings.updateProviderInstance(providerInstanceMutation, nextPatch);
-            return ServerSettings.redactServerSettingsForClient(settings);
+            const clientSettings = ServerSettings.redactServerSettingsForClient(settings);
+            return patch.newTaskFolder === undefined
+              ? clientSettings
+              : {
+                  ...clientSettings,
+                  newTaskFolderPersisted: clientSettings.newTaskFolder === patch.newTaskFolder,
+                };
           }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) => sourceControlDiscovery.discover,
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>

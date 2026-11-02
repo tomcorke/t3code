@@ -59,6 +59,8 @@ export function TaskCreateDialog(props: {
   const [enrich, setEnrich] = useState(existing?.enrich ?? true);
   const [serverFolder, setServerFolder] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submitting = useRef(false);
 
   const fetchServerFolder = useEffectEvent((environmentId: EnvironmentId) =>
     defaultFolder({ environmentId, input: {} }),
@@ -84,14 +86,23 @@ export function TaskCreateDialog(props: {
   }, [props.environmentId, serverConfigLoaded, serverFolderSetting]);
 
   const destination = folder.trim() || serverFolder;
+  const close = () => {
+    if (submitting.current) return;
+    props.onClose();
+  };
   const submit = async () => {
+    if (submitting.current) return;
     const directory = folder.trim();
     if (canUpdateSettings) {
+      submitting.current = true;
+      setIsSubmitting(true);
       const result = await updateSettings({
         environmentId: props.environmentId,
         input: { patch: { newTaskFolder: directory } },
       });
       if (result._tag === "Failure") {
+        submitting.current = false;
+        setIsSubmitting(false);
         const failure = squashAtomCommandFailure(result);
         setError(
           failure instanceof Error
@@ -100,8 +111,12 @@ export function TaskCreateDialog(props: {
         );
         return;
       }
-      removeLegacyTaskFolder(props.environmentId);
+      if (result.value.newTaskFolderPersisted === true) {
+        removeLegacyTaskFolder(props.environmentId);
+      }
     }
+    submitting.current = false;
+    setIsSubmitting(false);
     const next: NewTaskPlan = {
       title: title.trim(),
       description: description.trim(),
@@ -110,12 +125,12 @@ export function TaskCreateDialog(props: {
     };
     plan(props.taskDocumentId, next);
     props.onPlanned(props.taskDocumentId);
-    props.onClose();
+    close();
   };
 
   return (
-    <Dialog open onOpenChange={(open) => !open && props.onClose()}>
-      <DialogPopup className="max-w-lg">
+    <Dialog open onOpenChange={(open) => !open && close()}>
+      <DialogPopup className="max-w-lg" showCloseButton={!isSubmitting}>
         <form
           className="flex min-h-0 flex-col"
           onSubmit={(event) => {
@@ -180,11 +195,11 @@ export function TaskCreateDialog(props: {
             </div>
           </DialogPanel>
           <DialogFooter>
-            <Button type="button" variant="ghost" onClick={props.onClose}>
+            <Button type="button" variant="ghost" disabled={isSubmitting} onClick={close}>
               Cancel
             </Button>
-            <Button type="submit" disabled={title.trim() === ""}>
-              Use new task
+            <Button type="submit" disabled={title.trim() === "" || isSubmitting}>
+              {isSubmitting ? "Saving…" : "Use new task"}
             </Button>
           </DialogFooter>
         </form>
