@@ -128,6 +128,7 @@ function replaceWikiLinks(
   environmentId: EnvironmentId,
   markdownSource: string,
   lineStarts: ReadonlyArray<number>,
+  sourceCursors: Map<string, number>,
   sourceRange?: SourceRange,
 ): MarkdownNode[] {
   if (node.type === "text" && typeof node.value === "string") {
@@ -142,7 +143,12 @@ function replaceWikiLinks(
     const output: MarkdownNode[] = [];
     const pattern = /\[\[([^\]|]+?)(?:\|([^\]]*))?\]\]/g;
     let cursor = 0;
-    let sourceCursor = 0;
+    const cursorRange = sourceRange ?? searchRange;
+    const cursorKey = `${cursorRange.start}:${cursorRange.end}`;
+    let sourceCursor = Math.max(
+      0,
+      (sourceCursors.get(cursorKey) ?? 0) - (searchRange.start - cursorRange.start),
+    );
     let replaced = false;
 
     for (const match of node.value.matchAll(pattern)) {
@@ -150,6 +156,13 @@ function replaceWikiLinks(
       const sourceMatch = findSourceMatch(markdownSource, searchRange, match[0], sourceCursor);
       if (sourceMatch === null) continue;
       sourceCursor = sourceMatch.index - searchRange.start + match[0].length;
+      sourceCursors.set(
+        cursorKey,
+        Math.max(
+          sourceCursors.get(cursorKey) ?? 0,
+          sourceMatch.index + match[0].length - cursorRange.start,
+        ),
+      );
       if (sourceMatch.escaped || node.value[index - 1] === "!") continue;
       const sourceIndex = sourceMatch.index;
       const task = resolveTask(match[1] ?? "", tasks);
@@ -188,7 +201,15 @@ function replaceWikiLinks(
           ? ownRange
           : sourceRange;
     node.children = node.children.flatMap((child) =>
-      replaceWikiLinks(child, tasks, environmentId, markdownSource, lineStarts, childSourceRange),
+      replaceWikiLinks(
+        child,
+        tasks,
+        environmentId,
+        markdownSource,
+        lineStarts,
+        sourceCursors,
+        childSourceRange,
+      ),
     );
   }
   return [node];
@@ -202,9 +223,10 @@ export function remarkTaskWikiLinks(
   return () => (tree) => {
     const root = tree as unknown as MarkdownNode;
     const lineStarts = markdownLineStarts(markdownSource);
+    const sourceCursors = new Map<string, number>();
     if (root.children) {
       root.children = root.children.flatMap((child) =>
-        replaceWikiLinks(child, tasks, environmentId, markdownSource, lineStarts),
+        replaceWikiLinks(child, tasks, environmentId, markdownSource, lineStarts, sourceCursors),
       );
     }
   };

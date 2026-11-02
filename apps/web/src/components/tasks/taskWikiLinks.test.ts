@@ -159,4 +159,11 @@ it("resolves task links in recovered over-indented list prose", () => {
   expect(links(renderTree(markdown, [parent], true))).toEqual([
     { url: `/task/test-environment/${parentId}`, label: "Parent decision" },
   ]);
+
+  const escapedThenEmphasized =
+    "A long preceding paragraph moves the recovered list past its synthetic child offsets.\n\n" +
+    "-       \\[[Parent decision]] and *[[Parent decision]]*";
+  expect(links(renderTree(escapedThenEmphasized, [parent], true))).toEqual([
+    { url: `/task/test-environment/${parentId}`, label: "Parent decision" },
+  ]);
 });
