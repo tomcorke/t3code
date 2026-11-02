@@ -29,21 +29,32 @@ export function reuseUnchangedThreadShells(
   previous: OrchestrationV2ShellSnapshot | null,
   next: OrchestrationV2ShellSnapshot,
 ): OrchestrationV2ShellSnapshot {
-  if (previous === null || previous.threads.length === 0) return next;
-  const previousById = new Map(previous.threads.map((thread) => [thread.id, thread] as const));
-  let changed = false;
-  const threads = next.threads.map((thread) => {
-    const prior = previousById.get(thread.id);
-    if (prior === undefined) return thread;
-    const candidate =
-      thread.pullRequests === undefined && prior.pullRequests !== undefined
-        ? { ...thread, pullRequests: prior.pullRequests }
-        : thread;
-    const retained = sameThreadShell(prior, candidate) ? prior : candidate;
-    if (retained !== thread) changed = true;
-    return retained;
-  });
-  return changed ? { ...next, threads } : next;
+  if (previous === null) return next;
+  const reuseRows = (
+    previousRows: OrchestrationV2ShellSnapshot["threads"],
+    nextRows: OrchestrationV2ShellSnapshot["threads"],
+  ) => {
+    if (previousRows.length === 0) return nextRows;
+    const previousById = new Map(previousRows.map((thread) => [thread.id, thread] as const));
+    let changed = false;
+    const rows = nextRows.map((thread) => {
+      const prior = previousById.get(thread.id);
+      if (prior === undefined) return thread;
+      const candidate =
+        thread.pullRequests === undefined && prior.pullRequests !== undefined
+          ? { ...thread, pullRequests: prior.pullRequests }
+          : thread;
+      const retained = sameThreadShell(prior, candidate) ? prior : candidate;
+      if (retained !== thread) changed = true;
+      return retained;
+    });
+    return changed ? rows : nextRows;
+  };
+  const threads = reuseRows(previous.threads, next.threads);
+  const archivedThreads = reuseRows(previous.archivedThreads, next.archivedThreads);
+  return threads === next.threads && archivedThreads === next.archivedThreads
+    ? next
+    : { ...next, threads, archivedThreads };
 }
 
 function upsertById<T extends { readonly id: unknown }>(

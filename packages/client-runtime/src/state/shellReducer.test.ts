@@ -326,4 +326,27 @@ describe("reuseUnchangedThreadShells", () => {
     expect(next).toBe(incoming);
     expect(next.threads[0]?.pullRequests).toEqual([]);
   });
+
+  it("reuses archived rows that are unchanged in a new shell snapshot", () => {
+    const archived = {
+      ...v2ThreadShell,
+      id: ThreadId.make("thread-archived"),
+      archivedAt: v2ThreadShell.updatedAt,
+    };
+    const previous = {
+      ...v2ShellSnapshot,
+      threads: [v2ThreadShell],
+      archivedThreads: [archived],
+    };
+    const incoming = {
+      ...v2ShellSnapshot,
+      snapshotSequence: 6,
+      threads: [{ ...v2ThreadShell }],
+      archivedThreads: [{ ...archived }],
+    };
+
+    const next = reuseUnchangedThreadShells(previous, incoming);
+
+    expect(next.archivedThreads[0]).toBe(archived);
+  });
 });

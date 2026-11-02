@@ -140,9 +140,20 @@ export function useQuietThreadShell(ref: ScopedThreadRef | null): EnvironmentThr
   );
 }
 
-/** Every thread shell, held through streaming ticks; see quietThreadShellAtom. */
+/** Every environment thread shell, held through streaming ticks; see quietThreadShellAtom. */
 export function useQuietThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.quietThreadShellsAtom);
+}
+
+export function useEnvironmentQuietThreadShells(
+  environmentId: EnvironmentId | null,
+  enabled = true,
+): ReadonlyArray<EnvironmentThreadShell> {
+  return useAtomValue(
+    environmentId === null || !enabled
+      ? EMPTY_THREAD_SHELLS_ATOM
+      : environmentThreadShells.quietThreadShellsForEnvironmentAtom(environmentId),
+  );
 }
 
 export function useChildThreadInputs(ref: ScopedThreadRef | null) {

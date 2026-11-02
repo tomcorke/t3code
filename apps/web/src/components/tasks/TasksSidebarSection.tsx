@@ -5,8 +5,10 @@ import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { useEnvironments } from "~/state/environments";
+import { useEnvironmentQuietThreadShells } from "~/state/entities";
 
 import { TaskImportDialog } from "./TaskImportDialog";
+import { taskThreadAttentionByDocumentId, type TaskThreadAttention } from "./taskThreadAttention";
 import { useTaskCatalogue } from "./useTaskDocuments";
 
 function compareTaskTitle(a: TaskDocumentSummary, b: TaskDocumentSummary) {
@@ -63,12 +65,28 @@ function availabilityLabel(task: TaskDocumentSummary) {
   }
 }
 
+const attentionLabels: Record<TaskThreadAttention, string> = {
+  "needs-approval": "Needs approval",
+  failed: "Failed",
+  running: "Running",
+  idle: "Idle",
+};
+
+const attentionTone: Record<TaskThreadAttention, string> = {
+  "needs-approval": "text-amber-600 dark:text-amber-300/90",
+  failed: "text-red-600 dark:text-red-300/90",
+  running: "text-sky-600 dark:text-sky-300/80",
+  idle: "text-muted-foreground",
+};
+
 function EnvironmentTasks(props: {
   readonly environmentId: EnvironmentId;
   readonly label: string | null;
 }) {
   const { environmentId } = props;
   const { available, canRegister, tasks } = useTaskCatalogue(environmentId);
+  const threads = useEnvironmentQuietThreadShells(environmentId, available && tasks.length > 0);
+  const attentionByTaskId = taskThreadAttentionByDocumentId(threads);
   const navigate = useNavigate();
   const [importing, setImporting] = useState(false);
   if (!available) return null;
@@ -101,6 +119,7 @@ function EnvironmentTasks(props: {
             <ul className="flex flex-col gap-px">
               {group.tasks.map((task) => {
                 const availability = availabilityLabel(task);
+                const attention = attentionByTaskId.get(task.taskDocumentId);
                 const detail = [group.pinned ? task.state : null, availability]
                   .filter(Boolean)
                   .join(" · ");
@@ -113,7 +132,16 @@ function EnvironmentTasks(props: {
                       className="flex min-h-7 items-center gap-2 rounded-md px-2 py-1 text-sm hover:bg-accent data-[status=active]:bg-accent"
                     >
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate">{task.title}</span>
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <span className="min-w-0 flex-1 truncate">{task.title}</span>
+                          {attention ? (
+                            <span
+                              className={`shrink-0 rounded bg-muted px-1.5 py-0.5 text-3xs leading-none ${attentionTone[attention]}`}
+                            >
+                              {attentionLabels[attention]}
+                            </span>
+                          ) : null}
+                        </span>
                         {detail ? (
                           <span className="block truncate text-muted-foreground text-xs">
                             {detail}

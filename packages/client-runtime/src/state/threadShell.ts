@@ -216,6 +216,34 @@ export function createEnvironmentThreadShellAtoms(input: {
     }).pipe(Atom.withLabel(`environment-thread-index:${environmentId}`)),
   );
 
+  const environmentArchivedThreadsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make(
+      (get): ReadonlyArray<OrchestrationV2ThreadShell> =>
+        get(input.snapshotAtom(environmentId))?.archivedThreads ?? EMPTY_THREADS,
+    ).pipe(Atom.withLabel(`environment-archived-threads:${environmentId}`)),
+  );
+
+  const environmentArchivedThreadIndexAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get): ReadonlyMap<ThreadId, OrchestrationV2ThreadShell> => {
+      const threads = get(environmentArchivedThreadsAtom(environmentId));
+      if (threads.length === 0) return EMPTY_THREAD_INDEX;
+      return new Map(threads.map((thread) => [thread.id, thread] as const));
+    }).pipe(Atom.withLabel(`environment-archived-thread-index:${environmentId}`)),
+  );
+
+  const environmentArchivedThreadRefsAtom = Atom.family((environmentId: EnvironmentId) => {
+    let previous: ReadonlyArray<ScopedThreadRef> = [];
+    return Atom.make((get) => {
+      const next = get(environmentArchivedThreadsAtom(environmentId)).map((thread) => ({
+        environmentId,
+        threadId: thread.id,
+      }));
+      if (threadRefsEqual(previous, next)) return previous;
+      previous = next;
+      return next;
+    }).pipe(Atom.withLabel(`environment-archived-thread-refs:${environmentId}`));
+  });
+
   // What an environment's own subagents ask. Kept apart from the tasks other
   // environments run for it, so two environments delegating to each other
   // never read each other's totals.
@@ -351,7 +379,10 @@ export function createEnvironmentThreadShellAtoms(input: {
   const threadShellAtomFamily = Atom.family((key: string) => {
     const ref = parseThreadKey(key);
     return Atom.make((get) => {
-      const source = get(environmentThreadIndexAtom(ref.environmentId)).get(ref.threadId) ?? null;
+      const source =
+        get(environmentThreadIndexAtom(ref.environmentId)).get(ref.threadId) ??
+        get(environmentArchivedThreadIndexAtom(ref.environmentId)).get(ref.threadId) ??
+        null;
       return source === null
         ? null
         : scopedThread(
@@ -518,6 +549,24 @@ export function createEnvironmentThreadShellAtoms(input: {
     return next;
   }).pipe(Atom.withLabel("environment-quiet-thread-shell-list"));
 
+  const quietThreadShellsForEnvironmentAtomFamily = Atom.family((environmentId: EnvironmentId) => {
+    let previous: ReadonlyArray<EnvironmentThreadShell> = [];
+    return Atom.make((get) => {
+      const next: EnvironmentThreadShell[] = [];
+      const refs = [
+        ...get(environmentThreadRefsAtom(environmentId)),
+        ...get(environmentArchivedThreadRefsAtom(environmentId)),
+      ];
+      for (const ref of refs) {
+        const shell = get(quietThreadShellAtomFamily(threadKey(ref)));
+        if (shell !== null) next.push(shell);
+      }
+      if (arrayElementsEqual(previous, next)) return previous;
+      previous = next;
+      return next;
+    }).pipe(Atom.withLabel(`environment-quiet-thread-shells:${environmentId}`));
+  });
+
   let previousDelegatedUnderParent: ReadonlySet<string> = new Set();
   const delegatedUnderParentAtom = Atom.make((get) => {
     const environmentIds = new Set(enabledEnvironmentIds(get(input.catalogValueAtom)));
@@ -575,6 +624,8 @@ export function createEnvironmentThreadShellAtoms(input: {
     threadRefsAtom,
     threadShellsAtom,
     quietThreadShellsAtom,
+    quietThreadShellsForEnvironmentAtom: (environmentId: EnvironmentId) =>
+      quietThreadShellsForEnvironmentAtomFamily(environmentId),
     navigationThreadShellsAtom,
     delegatedUnderParentAtom,
     pendingSubagentRequestsAtom,
