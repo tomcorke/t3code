@@ -11,6 +11,7 @@ type Node = {
   type: string;
   value?: string;
   url?: string;
+  data?: unknown;
   children?: Node[];
   position?: { start?: { offset?: number }; end?: { offset?: number } };
 };
@@ -177,6 +178,41 @@ it("resolves task links in recovered over-indented list prose", () => {
   const nestedRecoveredLinks = "x\n\n-       [[Parent decision]]\n        - [[Readme]]";
   expect(links(renderTree(nestedRecoveredLinks, [parent, readme], true))).toEqual([
     { url: `/task/test-environment/${parentId}`, label: "Parent decision" },
+    { url: `/task/test-environment/${readmeId}`, label: "Readme" },
+  ]);
+});
+
+it("keeps the inherited source range for nested recovered list items", () => {
+  const markdown = "[[Parent decision]] and [[Readme]]";
+  const tree = {
+    type: "root",
+    children: [
+      {
+        type: "listItem",
+        data: { t3RecoveredListIndentation: true },
+        position: { start: { offset: 0 }, end: { offset: markdown.length } },
+        children: [
+          {
+            type: "listItem",
+            data: { t3RecoveredListIndentation: true },
+            position: { start: { offset: 0 }, end: { offset: "[[Parent decision]]".length } },
+            children: [
+              {
+                type: "text",
+                value: "[[Readme]]",
+                position: { start: { offset: 0 }, end: { offset: "[[Readme]]".length } },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  } as unknown as Root;
+
+  const processor = unified().use(remarkTaskWikiLinks([readme], environmentId, markdown));
+  const transformed = processor.runSync(tree, { value: markdown }) as Node;
+
+  expect(links(transformed)).toEqual([
     { url: `/task/test-environment/${readmeId}`, label: "Readme" },
   ]);
 });

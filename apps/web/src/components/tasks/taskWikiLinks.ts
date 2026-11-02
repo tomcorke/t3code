@@ -199,10 +199,10 @@ function replaceWikiLinks(
     const recoveredListItem =
       node.type === "listItem" && node.data?.t3RecoveredListIndentation === true;
     const ignoreChildRanges = ignoreChildSourceRanges || recoveredListItem;
-    const childSourceRange = recoveredListItem
-      ? (ownRange ?? sourceRange)
-      : ignoreChildSourceRanges
-        ? (sourceRange ?? ownRange ?? undefined)
+    const childSourceRange = ignoreChildSourceRanges
+      ? (sourceRange ?? ownRange ?? undefined)
+      : recoveredListItem
+        ? (ownRange ?? sourceRange)
         : node.type === "listItem"
           ? (ownRange ?? sourceRange)
           : node.type === "paragraph" &&
