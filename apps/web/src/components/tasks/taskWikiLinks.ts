@@ -25,7 +25,10 @@ type MarkdownNode = {
   children?: MarkdownNode[];
 };
 
-type TaskWikiTarget = Pick<TaskDocumentSummary, "canonicalPath" | "taskDocumentId" | "title">;
+type TaskWikiTarget = Pick<
+  TaskDocumentSummary,
+  "canonicalPath" | "registered" | "taskDocumentId" | "title"
+>;
 type SourceRange = { start: number; end: number };
 
 function isWindowsPath(path: string) {
@@ -50,6 +53,8 @@ function resolveTask(target: string, tasks: ReadonlyArray<TaskWikiTarget>): Task
   if (!trimmedTarget) return null;
 
   const matches = tasks.filter((task) => {
+    if (!task.registered) return false;
+
     const caseInsensitive = isWindowsPath(task.canonicalPath);
     const normalizedTarget = withoutMarkdownExtension(
       normalizedPath(trimmedTarget, caseInsensitive),

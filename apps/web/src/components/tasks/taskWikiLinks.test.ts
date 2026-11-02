@@ -15,6 +15,12 @@ type Node = {
   children?: Node[];
   position?: { start?: { offset?: number }; end?: { offset?: number } };
 };
+type TaskTarget = {
+  canonicalPath: string;
+  taskDocumentId: TaskDocumentId;
+  title: string;
+  registered: boolean;
+};
 
 const environmentId = EnvironmentId.make("test-environment");
 const parentId = TaskDocumentId.make("18000000-0000-4000-8000-000000000001");
@@ -22,30 +28,40 @@ const duplicateId = TaskDocumentId.make("18000000-0000-4000-8000-000000000002");
 const readmeId = TaskDocumentId.make("18000000-0000-4000-8000-000000000003");
 const windowsId = TaskDocumentId.make("18000000-0000-4000-8000-000000000004");
 
-const parent = {
+const parent: TaskTarget = {
   canonicalPath: "/vault/tasks/Parent decision.md",
   taskDocumentId: parentId,
   title: "Parent decision",
+  registered: true,
 };
-const duplicate = {
+const duplicate: TaskTarget = {
   canonicalPath: "/vault/other/Parent decision.md",
   taskDocumentId: duplicateId,
   title: "Parent decision",
+  registered: true,
 };
-const readme = {
+const readme: TaskTarget = {
   canonicalPath: "/vault/tasks/Readme.md",
   taskDocumentId: readmeId,
   title: "Readme",
+  registered: true,
 };
-const windowsTask = {
+const windowsTask: TaskTarget = {
   canonicalPath: "C:\\vault\\tasks\\Windows item.md",
   taskDocumentId: windowsId,
   title: "Windows item",
+  registered: true,
+};
+const unregistered: TaskTarget = {
+  canonicalPath: "/vault/tasks/Unregistered.md",
+  taskDocumentId: TaskDocumentId.make("18000000-0000-4000-8000-000000000005"),
+  title: "Unregistered",
+  registered: false,
 };
 
 function renderTree(
   markdown: string,
-  taskTargets: ReadonlyArray<typeof parent> = [parent],
+  taskTargets: ReadonlyArray<TaskTarget> = [parent],
   normalizeLists = false,
 ) {
   const processor = unified().use(remarkParse);
@@ -80,6 +96,13 @@ it("renders registered task wikilinks as app links with aliases and default labe
     { url: `/task/test-environment/${parentId}`, label: "the parent" },
     { url: `/task/test-environment/${parentId}`, label: "Parent decision" },
   ]);
+});
+
+it("leaves links to unregistered catalogue rows untouched", () => {
+  const tree = renderTree("[[Unregistered]]", [unregistered]);
+
+  expect(links(tree)).toEqual([]);
+  expect(text(tree)).toContain("[[Unregistered]]");
 });
 
 it("handles only links marked at a wikilink source position", () => {
