@@ -82,7 +82,7 @@ it("plans a new task without writing a file, and cancelling plans nothing", asyn
   await expect
     .element(
       page.getByText(
-        /Creates the file in \/old\/client\/tasks\. Changes are saved as this server's default\./,
+        /Creates the file in \/old\/client\/tasks\. This server saves this as its default/,
       ),
     )
     .toBeVisible();
@@ -199,7 +199,7 @@ it("keeps the dialog open and does not plan a task when saving the server defaul
 it("keeps the legacy folder when an older server does not confirm the new setting", async () => {
   state.legacyFolder = "/old/client/tasks";
   state.settingsFolder = "";
-  state.updateSettings.mockResolvedValue(AsyncResult.success({ newTaskFolder: "" }));
+  state.updateSettings.mockReset().mockResolvedValue(AsyncResult.success({ newTaskFolder: "" }));
   state.removeLegacyFolder.mockReset();
   state.defaultFolder.mockResolvedValue(AsyncResult.success({ directory: "/managed/tasks" }));
   useNewTaskStore.setState({ byId: {} });
@@ -219,9 +219,17 @@ it("keeps the legacy folder when an older server does not confirm the new settin
 
   expect(state.removeLegacyFolder).not.toHaveBeenCalled();
   expect(state.legacyFolder).toBe("/old/client/tasks");
+  expect(useNewTaskStore.getState().byId).toEqual({});
+  expect(onPlanned).not.toHaveBeenCalled();
+  expect(onClose).not.toHaveBeenCalled();
+  await expect.element(page.getByText(/This server did not save the shared default/)).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Use for this task" })).toBeEnabled();
+  await userEvent.type(page.getByRole("textbox", { name: "Title" }), "{Enter}");
+
   expect(useNewTaskStore.getState().byId[taskDocumentId]?.directory).toBe("/old/client/tasks");
   expect(onPlanned).toHaveBeenCalledOnce();
   expect(onClose).toHaveBeenCalledOnce();
+  expect(state.updateSettings).toHaveBeenCalledOnce();
 });
 
 it("blocks dismissal while saving the server default", async () => {

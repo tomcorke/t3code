@@ -59,6 +59,7 @@ export function TaskCreateDialog(props: {
   const [enrich, setEnrich] = useState(existing?.enrich ?? true);
   const [serverFolder, setServerFolder] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [serverFolderUnsupported, setServerFolderUnsupported] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submitting = useRef(false);
 
@@ -93,7 +94,7 @@ export function TaskCreateDialog(props: {
   const submit = async () => {
     if (submitting.current) return;
     const directory = folder.trim();
-    if (canUpdateSettings) {
+    if (canUpdateSettings && !serverFolderUnsupported) {
       submitting.current = true;
       setIsSubmitting(true);
       const result = await updateSettings({
@@ -111,9 +112,13 @@ export function TaskCreateDialog(props: {
         );
         return;
       }
-      if (result.value.newTaskFolderPersisted === true) {
-        removeLegacyTaskFolder(props.environmentId);
+      if (result.value.newTaskFolderPersisted !== true) {
+        submitting.current = false;
+        setIsSubmitting(false);
+        setServerFolderUnsupported(true);
+        return;
       }
+      removeLegacyTaskFolder(props.environmentId);
     }
     submitting.current = false;
     setIsSubmitting(false);
@@ -178,9 +183,11 @@ export function TaskCreateDialog(props: {
                 />
                 <span className="text-muted-foreground text-xs">
                   Creates the file in {destination ?? "the environment's managed folder"}.{" "}
-                  {canUpdateSettings
-                    ? "Changes are saved as this server's default."
-                    : "The folder only applies to this task without settings write access."}
+                  {serverFolderUnsupported
+                    ? "This server did not save the shared default; this folder will apply to this task only."
+                    : canUpdateSettings
+                      ? "This server saves this as its default when it supports the setting."
+                      : "The folder only applies to this task without settings write access."}
                 </span>
               </label>
               {error ? (
@@ -199,7 +206,11 @@ export function TaskCreateDialog(props: {
               Cancel
             </Button>
             <Button type="submit" disabled={title.trim() === "" || isSubmitting}>
-              {isSubmitting ? "Saving…" : "Use new task"}
+              {isSubmitting
+                ? "Saving…"
+                : serverFolderUnsupported
+                  ? "Use for this task"
+                  : "Use new task"}
             </Button>
           </DialogFooter>
         </form>
