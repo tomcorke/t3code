@@ -48,6 +48,19 @@ import {
   ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
+import {
+  DEFAULT_TASK_THREAD_STARTER_TEMPLATE,
+  DEFAULT_TASK_THREAD_STARTER_TEMPLATE_VERSION,
+  taskThreadStarterTemplateError,
+} from "./taskThreadStarter.ts";
+
+const TaskStarterTemplate = Schema.String.check(
+  Schema.isMaxLength(8_000),
+  Schema.makeFilter((value) => taskThreadStarterTemplateError(value) ?? true, {
+    expected: "a task starter template with the required placeholders",
+  }),
+);
+const TaskUpdateInstructionsPath = TrimmedString.check(Schema.isMaxLength(4_096));
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
@@ -1239,6 +1252,15 @@ export const ServerSettings = Schema.Struct({
   worktreesDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /** Empty uses the managed T3 tasks folder. */
   newTaskFolder: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  taskStarterTemplate: TaskStarterTemplate.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_TASK_THREAD_STARTER_TEMPLATE)),
+  ),
+  taskStarterTemplateVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_TASK_THREAD_STARTER_TEMPLATE_VERSION)),
+  ),
+  taskUpdateInstructionsPath: TaskUpdateInstructionsPath.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
   /** Server-maintained history keeps old worktrees eligible for cleanup and review diffs. */
   previousWorktreesDirectories: Schema.Array(TrimmedString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -1416,6 +1438,7 @@ export type ServerSettings = typeof ServerSettings.Type;
 export const ServerSettingsUpdateResult = Schema.Struct({
   ...ServerSettings.fields,
   newTaskFolderPersisted: Schema.optionalKey(Schema.Boolean),
+  taskStarterSettingsPersisted: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerSettingsUpdateResult = typeof ServerSettingsUpdateResult.Type;
 
@@ -1623,6 +1646,8 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   worktreesDirectory: Schema.optionalKey(TrimmedString),
   newTaskFolder: Schema.optionalKey(TrimmedString),
+  taskStarterTemplate: Schema.optionalKey(TaskStarterTemplate),
+  taskUpdateInstructionsPath: Schema.optionalKey(TaskUpdateInstructionsPath),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),

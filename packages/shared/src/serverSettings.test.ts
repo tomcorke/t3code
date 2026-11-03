@@ -78,6 +78,22 @@ describe("fallbackTextGenerationModelSelection", () => {
 });
 
 describe("serverSettings helpers", () => {
+  it("versions starter template edits without versioning path changes", () => {
+    const template = `${DEFAULT_SERVER_SETTINGS.taskStarterTemplate}\nCustom note.`;
+    const updated = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      taskStarterTemplate: template,
+    });
+    expect(updated.taskStarterTemplateVersion).toBe(2);
+    expect(
+      applyServerSettingsPatch(updated, { taskUpdateInstructionsPath: "C:\\Tasks\\UPDATE.md" })
+        .taskStarterTemplateVersion,
+    ).toBe(2);
+    expect(
+      applyServerSettingsPatch(updated, { taskStarterTemplate: template })
+        .taskStarterTemplateVersion,
+    ).toBe(2);
+  });
+
   it("translates a shipped client's idle compaction switch into a mode", () => {
     const off = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { idleCompaction: "off" });
     expect([off.idleCompaction, off.compactIdleThreads]).toEqual(["off", false]);

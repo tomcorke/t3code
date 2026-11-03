@@ -1,5 +1,6 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, TaskDocumentId } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -14,10 +15,12 @@ import {
 } from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
 import {
-  readTaskUpdateInstructionsPath,
+  readLegacyTaskUpdateInstructionsPath,
+  removeLegacyTaskUpdateInstructionsPath,
   taskDocumentEnvironment,
-  writeTaskUpdateInstructionsPath,
+  writeLegacyTaskUpdateInstructionsPath,
 } from "~/state/taskDocuments";
+import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 /** Paths are typed because they belong to the environment's machine, not this client's. */
@@ -29,15 +32,69 @@ export function TaskImportDialog(props: {
 }) {
   const importing = props.mode === "import";
   const register = useAtomCommand(taskDocumentEnvironment.register, { reportFailure: false });
-  const [path, setPath] = useState("");
-  const [instructions, setInstructions] = useState(
-    () => readTaskUpdateInstructionsPath(props.environmentId) ?? "",
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
+  const canUpdateSettings = useAtomValue(
+    serverEnvironment.updateSettings.permissionAtom(props.environmentId),
   );
+  const [path, setPath] = useState("");
+  const legacyPath = readLegacyTaskUpdateInstructionsPath(props.environmentId) ?? "";
+  const [instructionsDraft, setInstructionsDraft] = useState<string | null>(null);
+  const instructions =
+    instructionsDraft ??
+    (serverConfig?.settings.taskUpdateInstructionsPath.trim() || legacyPath || "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
-    writeTaskUpdateInstructionsPath(props.environmentId, instructions);
+    setError(null);
+    const updatePath = instructions.trim();
+    const configuredPath = serverConfig?.settings.taskUpdateInstructionsPath.trim() ?? "";
+    const usingExistingLegacyPath =
+      importing &&
+      !canUpdateSettings &&
+      serverConfig !== null &&
+      configuredPath === "" &&
+      legacyPath !== "" &&
+      updatePath === legacyPath;
+    if (!usingExistingLegacyPath && serverConfig !== null && updatePath === configuredPath) {
+      removeLegacyTaskUpdateInstructionsPath(props.environmentId);
+    } else if (!usingExistingLegacyPath && canUpdateSettings && serverConfig !== null) {
+      setBusy(true);
+      const saved = await updateSettings({
+        environmentId: props.environmentId,
+        input: { patch: { taskUpdateInstructionsPath: updatePath } },
+      });
+      setBusy(false);
+      let settingsWriteError: string | null = null;
+      let legacyFallbackIsSafe = false;
+      if (saved._tag === "Failure") {
+        const failure = squashAtomCommandFailure(saved);
+        settingsWriteError =
+          failure instanceof Error ? failure.message : "Could not save the update path.";
+      } else if (saved.value.taskStarterSettingsPersisted !== true) {
+        settingsWriteError =
+          "Update T3 Code on this environment to save task initialization settings.";
+        legacyFallbackIsSafe = saved.value.taskUpdateInstructionsPath.trim() === "";
+      } else {
+        removeLegacyTaskUpdateInstructionsPath(props.environmentId);
+      }
+      if (settingsWriteError !== null) {
+        if (legacyFallbackIsSafe && importing) {
+          writeLegacyTaskUpdateInstructionsPath(props.environmentId, updatePath);
+        } else {
+          setError(settingsWriteError);
+          return;
+        }
+      }
+    } else if (!usingExistingLegacyPath) {
+      setError(
+        serverConfig === null
+          ? "Connect to this environment before saving the update path."
+          : "You need Settings write access to change this environment's update path.",
+      );
+      return;
+    }
     if (!importing) {
       props.onClose();
       return;
@@ -96,7 +153,7 @@ export function TaskImportDialog(props: {
                 <Input
                   autoFocus={!importing}
                   value={instructions}
-                  onChange={(event) => setInstructions(event.target.value)}
+                  onChange={(event) => setInstructionsDraft(event.target.value)}
                 />
               </label>
               {error ? (

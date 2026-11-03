@@ -59,11 +59,14 @@ const updateInstructionsKey = (environmentId: EnvironmentId) =>
   `t3code:task-update-instructions:${environmentId}`;
 
 /** A path on the environment's own machine, so each environment remembers its own. */
-export const readTaskUpdateInstructionsPath = (environmentId: EnvironmentId) =>
+export const readLegacyTaskUpdateInstructionsPath = (environmentId: EnvironmentId) =>
   getLocalStorageItem(updateInstructionsKey(environmentId), Schema.String)?.trim() || null;
 
-export const writeTaskUpdateInstructionsPath = (environmentId: EnvironmentId, path: string) =>
+export const writeLegacyTaskUpdateInstructionsPath = (environmentId: EnvironmentId, path: string) =>
   setLocalStorageItem(updateInstructionsKey(environmentId), path.trim(), Schema.String);
+
+export const removeLegacyTaskUpdateInstructionsPath = (environmentId: EnvironmentId) =>
+  removeLocalStorageItem(updateInstructionsKey(environmentId));
 
 const legacyTaskFolderKey = (environmentId: EnvironmentId) => `t3code:task-folder:${environmentId}`;
 

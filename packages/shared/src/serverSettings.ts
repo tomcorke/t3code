@@ -470,6 +470,11 @@ export function applyServerSettingsPatch(
   const next = deepMerge(current, patchForMerge);
   const nextWithReplacementsBase = {
     ...next,
+    taskStarterTemplateVersion:
+      patch.taskStarterTemplate !== undefined &&
+      patch.taskStarterTemplate !== current.taskStarterTemplate
+        ? current.taskStarterTemplateVersion + 1
+        : current.taskStarterTemplateVersion,
     favorites,
     providerModelPreferences: nextModelPreferences,
     ...(worktreeCleanupPatch === undefined

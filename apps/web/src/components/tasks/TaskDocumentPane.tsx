@@ -36,7 +36,11 @@ import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { randomUUID } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useProjects } from "~/state/entities";
-import { readTaskUpdateInstructionsPath, taskDocumentEnvironment } from "~/state/taskDocuments";
+import {
+  readLegacyTaskUpdateInstructionsPath,
+  taskDocumentEnvironment,
+} from "~/state/taskDocuments";
+import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { TaskPropertiesDialog } from "./TaskPropertiesDialog";
@@ -199,6 +203,7 @@ function TaskInitializationStatus(props: {
   readonly thread: EnvironmentThreadShell;
 }) {
   const launch = useAtomCommand(taskDocumentEnvironment.launch, { reportFailure: false });
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const canLaunch = useAtomValue(
     taskDocumentEnvironment.launch.permissionAtom(props.environmentId, {
       task: { taskDocumentId: props.taskDocumentId },
@@ -208,13 +213,17 @@ function TaskInitializationStatus(props: {
   const status = props.thread.taskInitialization?.status;
   if (!status) return null;
   const retry = async () => {
-    const updateInstructionsPath = readTaskUpdateInstructionsPath(props.environmentId);
+    const configuredUpdateInstructionsPath =
+      serverConfig?.settings.taskUpdateInstructionsPath.trim() ||
+      readLegacyTaskUpdateInstructionsPath(props.environmentId);
+    const updateInstructionsPath =
+      configuredUpdateInstructionsPath || props.thread.taskInitialization?.updateInstructionsPath;
     if (!updateInstructionsPath) {
       toastManager.add(
         stackedThreadToast({
           type: "warning",
           title: "Set the update instructions file",
-          description: "Choose it from the Task menu on a new thread, then retry.",
+          description: "Choose the path in Threads settings or from the Task menu, then retry.",
         }),
       );
       return;
