@@ -150,10 +150,9 @@ export function TaskCreateDialog(props: {
         }
       } catch (failure) {
         setError(failure instanceof Error ? failure.message : String(failure));
-      } finally {
-        submitting.current = false;
-        setIsSubmitting(false);
       }
+      submitting.current = false;
+      setIsSubmitting(false);
       if (createdTaskDocumentId !== null) props.onCreated?.(createdTaskDocumentId);
       return;
     }
