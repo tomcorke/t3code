@@ -164,6 +164,10 @@ function Document({ environmentId = "save-race" }: { environmentId?: string }) {
       <output aria-label="Recovery count">{recoveryRecords.length}</output>
       <button onClick={() => session.edit("saved draft")}>Edit</button>
       <button onClick={() => void save()}>Save</button>
+      <button onClick={() => session.acceptRead(session.beginRead(), document("new disk", "b"))}>
+        Change disk
+      </button>
+      <button onClick={() => session.keepDraft()}>Keep draft</button>
       <button onClick={restore}>Restore recovery</button>
     </>
   );
@@ -231,4 +235,17 @@ it("persists dirty task drafts in browser storage and lists and restores server 
   await expect
     .element(reloadedScreen.getByLabelText("Draft"))
     .toHaveTextContent("server recovery draft");
+  await vi.waitFor(() => {
+    const storedDraft = localStorage.getItem(storageKey);
+    expect(storedDraft).not.toBeNull();
+    expect(JSON.parse(storedDraft!).contents).toBe("server recovery draft");
+    expect(JSON.parse(storedDraft!).revision).toBe("a".repeat(64));
+  });
+  await userEvent.click(reloadedScreen.getByRole("button", { name: "Change disk" }));
+  await userEvent.click(reloadedScreen.getByRole("button", { name: "Keep draft" }));
+  await vi.waitFor(() => {
+    const storedDraft = localStorage.getItem(storageKey);
+    expect(storedDraft).not.toBeNull();
+    expect(JSON.parse(storedDraft!).revision).toBe("b".repeat(64));
+  });
 });

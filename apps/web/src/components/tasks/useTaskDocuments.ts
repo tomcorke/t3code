@@ -144,16 +144,29 @@ export function useTaskDocument(environmentId: EnvironmentId, taskDocumentId: Ta
     if (query.error !== null) session.failRead(session.beginRead(), query.error);
   }, [session, query.error]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persists a dirty task draft outside the page lifetime
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persists dirty content and its base revision outside the page lifetime
   useEffect(() => {
     if (!hasBaseDocument) return;
     const timeout = setTimeout(() => {
-      if (state.draft === session.getSnapshot().draft) {
+      const snapshot = session.getSnapshot();
+      if (
+        state.draft === snapshot.draft &&
+        recoveryRevision === (snapshot.base?.revision ?? null) &&
+        recoveryLocatorVersion === (snapshot.base?.summary.locatorVersion ?? null)
+      ) {
         persistTaskDocumentDraft(environmentId, taskDocumentId, session);
       }
     }, 250);
     return () => clearTimeout(timeout);
-  }, [environmentId, hasBaseDocument, session, state.draft, taskDocumentId]);
+  }, [
+    environmentId,
+    hasBaseDocument,
+    recoveryLocatorVersion,
+    recoveryRevision,
+    session,
+    state.draft,
+    taskDocumentId,
+  ]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- flushes the active task draft when its pane leaves the page
   useEffect(() => {
