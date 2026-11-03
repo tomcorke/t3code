@@ -58,6 +58,24 @@ import { TaskCreateDialog } from "./TaskCreateDialog";
 const environmentId = EnvironmentId.make("create-dialog");
 const taskDocumentId = TaskDocumentId.make("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
 
+function setupQuickCapture() {
+  state.create.mockReset().mockResolvedValue(AsyncResult.success({ summary: { taskDocumentId } }));
+  state.defaultFolder
+    .mockReset()
+    .mockResolvedValue(AsyncResult.success({ directory: "/managed/tasks" }));
+  state.legacyFolder = null;
+  state.configLoaded = true;
+  state.settingsWriteStatus = "granted";
+  state.settingsFolder = "/server/tasks";
+  state.removeLegacyFolder.mockReset();
+  state.updateSettings
+    .mockReset()
+    .mockResolvedValue(
+      AsyncResult.success({ newTaskFolder: "/server/tasks", newTaskFolderPersisted: true }),
+    );
+  useNewTaskStore.setState({ byId: {} });
+}
+
 it("plans a new task without writing a file, and cancelling plans nothing", async () => {
   state.legacyFolder = "/old/client/tasks";
   state.settingsFolder = "";
@@ -398,3 +416,67 @@ it.each(["denied", "loading", "failed"] as const)(
     state.settingsWriteStatus = "granted";
   },
 );
+
+it("creates a registered task directly without planning a thread", async () => {
+  setupQuickCapture();
+  const onClose = vi.fn();
+  const onCreated = vi.fn();
+
+  await using _screen = await render(
+    <TaskCreateDialog
+      environmentId={environmentId}
+      taskDocumentId={taskDocumentId}
+      mode="create"
+      onClose={onClose}
+      onCreated={onCreated}
+    />,
+    { router: false },
+  );
+  await userEvent.type(page.getByRole("textbox", { name: "Title" }), "  Capture this  ");
+  await userEvent.type(page.getByRole("textbox", { name: "Description" }), "  Keep this note  ");
+  await userEvent.keyboard("{Shift>}{Tab}{/Shift}{Enter}");
+  await vi.waitFor(() => expect(onCreated).toHaveBeenCalledWith(taskDocumentId));
+
+  expect(state.updateSettings).toHaveBeenCalledWith({
+    environmentId,
+    input: { patch: { newTaskFolder: "/server/tasks" } },
+  });
+  expect(state.removeLegacyFolder).toHaveBeenCalledOnce();
+  expect(state.create).toHaveBeenCalledOnce();
+  expect(state.create).toHaveBeenCalledWith({
+    environmentId,
+    input: {
+      taskDocumentId,
+      title: "Capture this",
+      description: "Keep this note",
+      directory: "/server/tasks",
+    },
+  });
+  expect(useNewTaskStore.getState().byId).toEqual({});
+  expect(onClose).not.toHaveBeenCalled();
+});
+
+it("cancels quick capture without creating or planning a task", async () => {
+  setupQuickCapture();
+  const onClose = vi.fn();
+  const onCreated = vi.fn();
+
+  await using _screen = await render(
+    <TaskCreateDialog
+      environmentId={environmentId}
+      taskDocumentId={taskDocumentId}
+      mode="create"
+      onClose={onClose}
+      onCreated={onCreated}
+    />,
+    { router: false },
+  );
+  await userEvent.type(page.getByRole("textbox", { name: "Title" }), "Abandoned capture");
+  await userEvent.keyboard("{Escape}");
+
+  expect(state.create).not.toHaveBeenCalled();
+  expect(state.updateSettings).not.toHaveBeenCalled();
+  expect(useNewTaskStore.getState().byId).toEqual({});
+  expect(onCreated).not.toHaveBeenCalled();
+  expect(onClose).toHaveBeenCalledOnce();
+});

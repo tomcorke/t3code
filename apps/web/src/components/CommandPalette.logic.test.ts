@@ -10,10 +10,25 @@ import {
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
   resolveAddProjectEntry,
+  resolveTaskCaptureEnvironmentId,
   createCommandPaletteSearchState,
   reduceCommandPaletteSearchState,
   type CommandPaletteUiState,
 } from "./CommandPalette.logic";
+
+describe("task capture environment", () => {
+  it("uses the task route environment before primary when no thread or draft is active", () => {
+    const environmentB = EnvironmentId.make("environment-b");
+
+    expect(
+      resolveTaskCaptureEnvironmentId({
+        currentProjectEnvironmentId: null,
+        routeEnvironmentId: environmentB,
+        primaryEnvironmentId: EnvironmentId.make("primary"),
+      }),
+    ).toBe(environmentB);
+  });
+});
 
 describe("linked pull request thread navigation", () => {
   it("keeps archived relations searchable and routes them through the PR environment", async () => {

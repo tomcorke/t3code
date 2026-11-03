@@ -175,6 +175,16 @@ export function resolveAddProjectEntry(
   return { kind: "choose-source", environmentId: defaultEnvironmentId };
 }
 
+export function resolveTaskCaptureEnvironmentId(input: {
+  readonly currentProjectEnvironmentId: EnvironmentId | null;
+  readonly routeEnvironmentId: EnvironmentId | null;
+  readonly primaryEnvironmentId: EnvironmentId | null;
+}): EnvironmentId | null {
+  return (
+    input.currentProjectEnvironmentId ?? input.routeEnvironmentId ?? input.primaryEnvironmentId
+  );
+}
+
 export interface CommandPaletteThreadContentMatch {
   readonly source: "user" | "assistant";
   readonly snippet: string;
