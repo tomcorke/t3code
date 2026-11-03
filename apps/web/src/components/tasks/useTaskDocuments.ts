@@ -83,6 +83,21 @@ function taskDocumentSession(environmentId: EnvironmentId, taskDocumentId: TaskD
   return session;
 }
 
+function persistTaskDocumentDraft(
+  environmentId: EnvironmentId,
+  taskDocumentId: TaskDocumentId,
+  session: TaskDocumentSession<EditorViewState>,
+) {
+  try {
+    const persistedDraft = session.getPersistedDraft();
+    if (persistedDraft === null) removeTaskDocumentDraft(environmentId, taskDocumentId);
+    else writeTaskDocumentDraft(environmentId, taskDocumentId, persistedDraft);
+    session.setPersistenceError(null);
+  } catch {
+    session.setPersistenceError("This browser could not save a local recovery copy.");
+  }
+}
+
 export function useTaskDocument(environmentId: EnvironmentId, taskDocumentId: TaskDocumentId) {
   const supported =
     useServerConfigs().get(environmentId)?.environment.capabilities.taskDocuments === true;
@@ -129,30 +144,27 @@ export function useTaskDocument(environmentId: EnvironmentId, taskDocumentId: Ta
     if (query.error !== null) session.failRead(session.beginRead(), query.error);
   }, [session, query.error]);
 
-  const persistDraft = useEffectEvent((draftContents: string) => {
-    try {
-      if (draftContents !== session.getSnapshot().draft) return;
-      const persistedDraft = session.getPersistedDraft();
-      if (persistedDraft === null) removeTaskDocumentDraft(environmentId, taskDocumentId);
-      else writeTaskDocumentDraft(environmentId, taskDocumentId, persistedDraft);
-      session.setPersistenceError(null);
-    } catch {
-      session.setPersistenceError("This browser could not save a local recovery copy.");
-    }
-  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persists a dirty task draft outside the page lifetime
   useEffect(() => {
     if (!hasBaseDocument) return;
     const timeout = setTimeout(() => {
-      persistDraft(state.draft);
+      if (state.draft === session.getSnapshot().draft) {
+        persistTaskDocumentDraft(environmentId, taskDocumentId, session);
+      }
     }, 250);
-    const onPageHide = () => persistDraft(state.draft);
+    return () => clearTimeout(timeout);
+  }, [environmentId, hasBaseDocument, session, state.draft, taskDocumentId]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- flushes the active task draft when its pane leaves the page
+  useEffect(() => {
+    if (!hasBaseDocument) return;
+    const onPageHide = () => persistTaskDocumentDraft(environmentId, taskDocumentId, session);
     window.addEventListener("pagehide", onPageHide);
     return () => {
-      clearTimeout(timeout);
       window.removeEventListener("pagehide", onPageHide);
+      persistTaskDocumentDraft(environmentId, taskDocumentId, session);
     };
-  }, [hasBaseDocument, state.draft]);
+  }, [environmentId, hasBaseDocument, session, taskDocumentId]);
 
   const fetchRecoveryRecords = useEffectEvent(async (target: EnvironmentId) =>
     listRecoveryCommand({ environmentId: target, input: { taskDocumentId } }),

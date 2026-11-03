@@ -222,9 +222,13 @@ it("persists dirty task drafts in browser storage and lists and restores server 
   await using screen = await render(<Document environmentId={environmentId} />);
   await expect.element(screen.getByLabelText("Recovery count")).toHaveTextContent("1");
   await userEvent.click(screen.getByRole("button", { name: "Edit" }));
-  await vi.waitFor(() => expect(localStorage.getItem(storageKey)).not.toBeNull());
+  await screen.unmount();
+  expect(localStorage.getItem(storageKey)).not.toBeNull();
   expect(localStorage.getItem(storageKey)).toContain("saved draft");
 
-  await userEvent.click(screen.getByRole("button", { name: "Restore recovery" }));
-  await expect.element(screen.getByLabelText("Draft")).toHaveTextContent("server recovery draft");
+  await using reloadedScreen = await render(<Document environmentId={environmentId} />);
+  await userEvent.click(reloadedScreen.getByRole("button", { name: "Restore recovery" }));
+  await expect
+    .element(reloadedScreen.getByLabelText("Draft"))
+    .toHaveTextContent("server recovery draft");
 });

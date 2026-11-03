@@ -139,18 +139,22 @@ export class TaskDocumentSession<TEditorView = unknown> {
   restoreRecovery(
     recovery: Pick<PersistedTaskDocumentDraft, "revision" | "locatorVersion" | "contents">,
   ) {
-    const { base } = this.state;
+    const { base, disk } = this.state;
     if (base === null || this.activeSave !== null) return false;
     if (recovery.contents === base.contents) {
       this.persistedBase = null;
-      this.update({ draft: base.contents, disk: null, error: null });
+      this.update({ draft: base.contents, disk, error: null });
       return true;
     }
     this.persistedBase = { revision: recovery.revision, locatorVersion: recovery.locatorVersion };
     const diskChanged =
       recovery.revision !== base.revision ||
       recovery.locatorVersion !== base.summary.locatorVersion;
-    this.update({ draft: recovery.contents, disk: diskChanged ? base : null, error: null });
+    this.update({
+      draft: recovery.contents,
+      disk: disk ?? (diskChanged ? base : null),
+      error: null,
+    });
     return true;
   }
 

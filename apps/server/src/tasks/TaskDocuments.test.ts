@@ -6,6 +6,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
+import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 import * as PlatformError from "effect/PlatformError";
 import * as FileSystem from "effect/FileSystem";
@@ -34,10 +35,11 @@ const fixture = `\uFEFF---\r\nid: ${fileId}\r\ntitle: "Café task"\r\nstate: "Wa
 const setup = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const config = yield* ServerConfig.ServerConfig;
   const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-task-fixtures-" });
   const target = path.join(directory, "Café 雪.md");
   yield* fs.writeFileString(target, fixture);
-  return { fs, path, directory, target, service: yield* TaskDocuments.TaskDocuments };
+  return { config, fs, path, directory, target, service: yield* TaskDocuments.TaskDocuments };
 });
 const save = (opened: import("@t3tools/contracts").OpenTaskDocument, contents: string) => ({
   taskDocumentId: opened.summary.taskDocumentId,
@@ -175,7 +177,7 @@ describe("TaskDocuments", () => {
     "preserves raw UTF-8/BOM/CRLF, projects metadata, and rejects stale saves with durable recovery",
     () =>
       Effect.gen(function* () {
-        const { fs, target, service } = yield* setup;
+        const { config, fs, path, target, service } = yield* setup;
         const opened = yield* service.register({ path: target });
         expect(opened.contents).toBe(fixture);
         expect(opened.summary).toMatchObject({
@@ -210,7 +212,67 @@ describe("TaskDocuments", () => {
         for (let attempt = 0; attempt < 10; attempt++) {
           yield* restarted.save(save(opened, fixture + `draft ${attempt}`)).pipe(Effect.flip);
         }
-        expect(yield* restarted.listRecovery(opened.summary)).toHaveLength(8);
+        const recoveryRefs = yield* restarted.listRecovery(opened.summary);
+        expect(recoveryRefs).toHaveLength(8);
+        const recoveries = yield* Effect.forEach(recoveryRefs, (ref) =>
+          restarted.readRecovery(ref).pipe(Effect.map((recovery) => ({ ref, recovery }))),
+        );
+        const latestAttempt = recoveries.find(
+          ({ recovery }) => recovery.contents === fixture + "draft 9",
+        );
+        const olderAttempt = recoveries.find(
+          ({ recovery }) => recovery.contents === fixture + "draft 8",
+        );
+        expect(latestAttempt).toBeDefined();
+        expect(olderAttempt).toBeDefined();
+        if (latestAttempt === undefined || olderAttempt === undefined) return;
+
+        const recoveryDirectory = path.join(config.stateDir, "task-document-recovery");
+        const recoveryPath = (ref: (typeof recoveryRefs)[number]) =>
+          path.join(recoveryDirectory, `${ref.taskDocumentId}.${ref.recoveryId}.json`);
+        yield* Effect.promise(async () => {
+          for (const [index, { ref }] of recoveries.entries()) {
+            const timestamp = 946684800 + index * 86_400;
+            await NodeFSP.utimes(recoveryPath(ref), timestamp, timestamp);
+          }
+          const latestTimestamp = 946684800 + 31 * 86_400;
+          await NodeFSP.utimes(recoveryPath(latestAttempt.ref), latestTimestamp, latestTimestamp);
+          const oldestTimestamp = 946684800;
+          await NodeFSP.utimes(recoveryPath(olderAttempt.ref), oldestTimestamp, oldestTimestamp);
+        });
+
+        const oldestFirstFs = FileSystem.FileSystem.of({
+          ...fs,
+          readDirectory: (directory) => {
+            if (directory !== recoveryDirectory) return fs.readDirectory(directory);
+            return fs.readDirectory(directory).pipe(
+              Effect.flatMap((names) =>
+                Effect.forEach(names, (name) =>
+                  fs.stat(path.join(directory, name)).pipe(
+                    Effect.map((info) => ({
+                      name,
+                      mtime: Option.getOrUndefined(info.mtime)?.getTime() ?? 0,
+                    })),
+                  ),
+                ),
+              ),
+              Effect.map((files) =>
+                files.sort((a, b) => a.mtime - b.mtime).map(({ name }) => name),
+              ),
+            );
+          },
+        });
+        const ordered = Context.get(
+          yield* Layer.build(
+            Layer.fresh(
+              TaskDocuments.layer.pipe(
+                Layer.provide(Layer.succeed(FileSystem.FileSystem, oldestFirstFs)),
+              ),
+            ),
+          ),
+          TaskDocuments.TaskDocuments,
+        );
+        expect((yield* ordered.listRecovery(opened.summary))[0]).toEqual(latestAttempt.ref);
       }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 

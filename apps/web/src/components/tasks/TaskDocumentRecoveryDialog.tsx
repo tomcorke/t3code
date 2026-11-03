@@ -60,27 +60,30 @@ export function TaskDocumentRecoveryDialog(props: {
         <DialogHeader>
           <DialogTitle>Task recovery copies</DialogTitle>
           <DialogDescription>
-            Preview a server copy, then restore it as your local draft. The task file is unchanged
-            until you save.
+            Preview a server copy and restore it as your local draft. Copies are listed newest
+            first, and the task file is unchanged until you save.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <div className="flex min-h-0 flex-col gap-3">
             <ul className="flex max-h-32 flex-col gap-1 overflow-auto">
-              {props.records.map((record) => (
-                <li key={record.recoveryId}>
-                  <Button
-                    size="sm"
-                    variant={selected?.recoveryId === record.recoveryId ? "secondary" : "outline"}
-                    disabled={loadingId !== null}
-                    onClick={() => void openRecovery(record)}
-                  >
-                    {loadingId === record.recoveryId
-                      ? "Opening copy…"
-                      : `Recovery copy ${record.recoveryId.slice(0, 8)}`}
-                  </Button>
-                </li>
-              ))}
+              {props.records.map((record, index) => {
+                const position = index === 0 ? "Most recent copy" : `Earlier copy ${index + 1}`;
+                return (
+                  <li key={record.recoveryId}>
+                    <Button
+                      size="sm"
+                      variant={selected?.recoveryId === record.recoveryId ? "secondary" : "outline"}
+                      disabled={loadingId !== null}
+                      onClick={() => void openRecovery(record)}
+                    >
+                      {loadingId === record.recoveryId
+                        ? "Opening copy…"
+                        : `${position} · ${record.recoveryId.slice(0, 8)}`}
+                    </Button>
+                  </li>
+                );
+              })}
             </ul>
             {props.hasUnsavedDraft ? (
               <p className="text-muted-foreground text-sm">

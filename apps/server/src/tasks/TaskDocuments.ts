@@ -598,13 +598,22 @@ const make = Effect.gen(function* () {
           cause.reason._tag === "NotFound" ? Effect.succeed([]) : Effect.fail(ioError()),
       }),
     );
-    return names
-      .filter((name) => name.startsWith(`${input.taskDocumentId}.`) && name.endsWith(".json"))
-      .map((name) => ({
-        taskDocumentId: input.taskDocumentId,
-        recoveryId: name.slice(input.taskDocumentId.length + 1, -5),
-      }));
-  });
+    const files = yield* Effect.forEach(
+      names.filter((name) => name.startsWith(`${input.taskDocumentId}.`) && name.endsWith(".json")),
+      (name) =>
+        mapIo(fs.stat(path.join(recoveryRoot, name))).pipe(
+          Effect.map((info) => ({
+            name,
+            mtime: Option.getOrUndefined(info.mtime)?.getTime() ?? 0,
+          })),
+        ),
+    );
+    files.sort((a, b) => b.mtime - a.mtime || a.name.localeCompare(b.name));
+    return files.map(({ name }) => ({
+      taskDocumentId: input.taskDocumentId,
+      recoveryId: name.slice(input.taskDocumentId.length + 1, -5),
+    }));
+  }, recoveryLock.withPermit);
   const readRecovery = Effect.fn("TaskDocuments.readRecovery")(function* (
     input: TaskDocumentRecoveryRef,
   ) {

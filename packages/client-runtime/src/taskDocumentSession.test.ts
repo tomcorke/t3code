@@ -71,6 +71,23 @@ describe("task document sessions", () => {
       disk: current,
     });
     expect(session.beginSave()).toBeNull();
+
+    const newer = document("newer disk", "c", 2);
+    const conflicted = new TaskDocumentSession();
+    conflicted.acceptRead(conflicted.beginRead(), current);
+    conflicted.edit("local draft");
+    conflicted.acceptRead(conflicted.beginRead(), newer);
+    conflicted.restoreRecovery({
+      revision: current.revision,
+      locatorVersion: current.summary.locatorVersion,
+      contents: "recovery based on current document",
+    });
+    expect(conflicted.getSnapshot()).toMatchObject({
+      base: current,
+      draft: "recovery based on current document",
+      disk: newer,
+    });
+    expect(conflicted.beginSave()).toBeNull();
   });
 
   it("refreshes clean text but retains base, draft and disk across external edits and failures", () => {

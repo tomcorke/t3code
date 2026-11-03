@@ -305,6 +305,9 @@ export default function TaskDocumentPane(props: {
   const [showRecoveries, setShowRecoveries] = useState(false);
   const { base, draft, disk, recovery, error, persistenceError, saving, view } = state;
   const summary = base?.summary ?? null;
+  const recoveryAction = `Review ${recoveryRecords.length} recovery ${
+    recoveryRecords.length === 1 ? "copy" : "copies"
+  }`;
   const catalogueTask = tasks.find((candidate) => candidate.taskDocumentId === taskDocumentId);
   const relinkTask = summary ?? catalogueTask;
   const { directory, name } = splitDocumentPath(summary?.canonicalPath ?? "");
@@ -421,6 +424,17 @@ export default function TaskDocumentPane(props: {
           </TooltipTrigger>
           <TooltipPopup>{summary?.canonicalPath}</TooltipPopup>
         </Tooltip>
+        {recoveryRecords.length > 0 ? (
+          <Button
+            size="xs"
+            variant="outline"
+            aria-label={recoveryAction}
+            title={recoveryAction}
+            onClick={() => setShowRecoveries(true)}
+          >
+            History {recoveryRecords.length}
+          </Button>
+        ) : null}
         <Button
           size="icon-xs"
           variant="ghost"
@@ -506,18 +520,6 @@ export default function TaskDocumentPane(props: {
         <Notice>{persistenceError} Keep this page open until you save the task.</Notice>
       ) : null}
       {recoveryError ? <Notice>{recoveryError}</Notice> : null}
-      {recoveryRecords.length > 0 ? (
-        <Notice
-          actions={
-            <Button size="xs" variant="outline" onClick={() => setShowRecoveries(true)}>
-              Review {recoveryRecords.length} recovery{" "}
-              {recoveryRecords.length === 1 ? "copy" : "copies"}
-            </Button>
-          }
-        >
-          Server recovery copies are available for this task.
-        </Notice>
-      ) : null}
       {!canSave ? <Notice>You can read this task but not edit it here.</Notice> : null}
       {disk !== null ? (
         <Notice
