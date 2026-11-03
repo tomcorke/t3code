@@ -9,6 +9,7 @@ import {
   type EnvironmentId,
   type ScopedThreadRef,
   type TaskDocumentId,
+  type TaskDocumentRecovery,
   type TaskDocumentSummary,
 } from "@t3tools/contracts";
 import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
@@ -39,6 +40,7 @@ import { readTaskUpdateInstructionsPath, taskDocumentEnvironment } from "~/state
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { TaskPropertiesDialog } from "./TaskPropertiesDialog";
+import { TaskDocumentRecoveryDialog } from "./TaskDocumentRecoveryDialog";
 import { TaskRelinkDialog } from "./TaskRelinkDialog";
 import { type TaskSession, useTaskCatalogue, useTaskDocument } from "./useTaskDocuments";
 import { remarkTaskWikiLinks } from "./taskWikiLinks";
@@ -281,10 +283,17 @@ export default function TaskDocumentPane(props: {
   readonly showOpenPage?: boolean;
 }) {
   const { environmentId, taskDocumentId, threadRef, thread } = props;
-  const { session, state, supported, canRead, canSave, save } = useTaskDocument(
-    environmentId,
-    taskDocumentId,
-  );
+  const {
+    session,
+    state,
+    supported,
+    canRead,
+    canSave,
+    recoveryRecords,
+    recoveryError,
+    restoreRecovery,
+    save,
+  } = useTaskDocument(environmentId, taskDocumentId);
   const { tasks, canRelink } = useTaskCatalogue(environmentId);
   const navigate = useNavigate();
   const projects = useProjects();
@@ -293,8 +302,12 @@ export default function TaskDocumentPane(props: {
   const [showDisk, setShowDisk] = useState(false);
   const [showProperties, setShowProperties] = useState(false);
   const [showRelink, setShowRelink] = useState(false);
-  const { base, draft, disk, recovery, error, saving, view } = state;
+  const [showRecoveries, setShowRecoveries] = useState(false);
+  const { base, draft, disk, recovery, error, persistenceError, saving, view } = state;
   const summary = base?.summary ?? null;
+  const recoveryAction = `Review ${recoveryRecords.length} recovery ${
+    recoveryRecords.length === 1 ? "copy" : "copies"
+  }`;
   const catalogueTask = tasks.find((candidate) => candidate.taskDocumentId === taskDocumentId);
   const relinkTask = summary ?? catalogueTask;
   const { directory, name } = splitDocumentPath(summary?.canonicalPath ?? "");
@@ -411,6 +424,17 @@ export default function TaskDocumentPane(props: {
           </TooltipTrigger>
           <TooltipPopup>{summary?.canonicalPath}</TooltipPopup>
         </Tooltip>
+        {recoveryRecords.length > 0 ? (
+          <Button
+            size="xs"
+            variant="outline"
+            aria-label={recoveryAction}
+            title={recoveryAction}
+            onClick={() => setShowRecoveries(true)}
+          >
+            History {recoveryRecords.length}
+          </Button>
+        ) : null}
         <Button
           size="icon-xs"
           variant="ghost"
@@ -492,6 +516,10 @@ export default function TaskDocumentPane(props: {
         </Notice>
       ) : null}
       {error ? <Notice>{error} Your draft is kept.</Notice> : null}
+      {persistenceError ? (
+        <Notice>{persistenceError} Keep this page open until you save the task.</Notice>
+      ) : null}
+      {recoveryError ? <Notice>{recoveryError}</Notice> : null}
       {!canSave ? <Notice>You can read this task but not edit it here.</Notice> : null}
       {disk !== null ? (
         <Notice
@@ -574,6 +602,15 @@ export default function TaskDocumentPane(props: {
           task={relinkTask}
           onRelink={(document) => session.acceptRead(session.beginRead(), document)}
           onClose={() => setShowRelink(false)}
+        />
+      ) : null}
+      {showRecoveries ? (
+        <TaskDocumentRecoveryDialog
+          environmentId={environmentId}
+          records={recoveryRecords}
+          hasUnsavedDraft={dirty}
+          onRestore={(serverRecovery: TaskDocumentRecovery) => restoreRecovery(serverRecovery)}
+          onClose={() => setShowRecoveries(false)}
         />
       ) : null}
     </section>

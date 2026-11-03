@@ -23,6 +23,107 @@ function document(contents: string, revision: string, locatorVersion = 0): OpenT
 }
 
 describe("task document sessions", () => {
+  it("restores a saved browser draft and rebases it only after an explicit conflict choice", () => {
+    const base = document("base", "a");
+    const persistedDraft = {
+      revision: base.revision,
+      locatorVersion: base.summary.locatorVersion,
+      contents: "my draft",
+    };
+    const session = new TaskDocumentSession(persistedDraft);
+    session.acceptRead(session.beginRead(), base);
+    expect(session.getSnapshot()).toMatchObject({ base, draft: "my draft", disk: null });
+    expect(session.getPersistedDraft()).toEqual(persistedDraft);
+
+    const changedOnDisk = document("external update", "b", 1);
+    const reopened = new TaskDocumentSession(persistedDraft);
+    reopened.acceptRead(reopened.beginRead(), changedOnDisk);
+    expect(reopened.getSnapshot()).toMatchObject({
+      base: changedOnDisk,
+      draft: "my draft",
+      disk: changedOnDisk,
+    });
+
+    reopened.keepDraft();
+    expect(reopened.getPersistedDraft()).toEqual({
+      revision: changedOnDisk.revision,
+      locatorVersion: changedOnDisk.summary.locatorVersion,
+      contents: "my draft",
+    });
+    const discarded = new TaskDocumentSession(persistedDraft);
+    discarded.acceptRead(discarded.beginRead(), changedOnDisk);
+    discarded.reloadDisk();
+    expect(discarded.getPersistedDraft()).toBeNull();
+  });
+
+  it("restores a server recovery draft without overwriting a newer document", () => {
+    const current = document("current disk", "b", 1);
+    const session = new TaskDocumentSession();
+    session.acceptRead(session.beginRead(), current);
+    session.restoreRecovery({
+      revision: document("old base", "a").revision,
+      locatorVersion: 0,
+      contents: "server recovery draft",
+    });
+    expect(session.getSnapshot()).toMatchObject({
+      base: current,
+      draft: "server recovery draft",
+      disk: current,
+    });
+    expect(session.beginSave()).toBeNull();
+
+    const newer = document("newer disk", "c", 2);
+    const conflicted = new TaskDocumentSession();
+    conflicted.acceptRead(conflicted.beginRead(), current);
+    conflicted.edit("local draft");
+    conflicted.acceptRead(conflicted.beginRead(), newer);
+    conflicted.restoreRecovery({
+      revision: current.revision,
+      locatorVersion: current.summary.locatorVersion,
+      contents: "recovery based on current document",
+    });
+    expect(conflicted.getSnapshot()).toMatchObject({
+      base: current,
+      draft: "recovery based on current document",
+      disk: newer,
+    });
+    expect(conflicted.beginSave()).toBeNull();
+
+    const resolvedConflict = new TaskDocumentSession();
+    resolvedConflict.acceptRead(resolvedConflict.beginRead(), current);
+    resolvedConflict.edit("kept draft");
+    resolvedConflict.acceptRead(resolvedConflict.beginRead(), newer);
+    resolvedConflict.keepDraft();
+    expect(resolvedConflict.getSnapshot().recovery).not.toBeNull();
+    resolvedConflict.restoreRecovery({
+      revision: current.revision,
+      locatorVersion: current.summary.locatorVersion,
+      contents: "restored server draft",
+    });
+    expect(resolvedConflict.getSnapshot()).toMatchObject({
+      base: newer,
+      draft: "restored server draft",
+      disk: newer,
+      recovery: null,
+    });
+
+    const resolvedCleanly = new TaskDocumentSession();
+    resolvedCleanly.acceptRead(resolvedCleanly.beginRead(), current);
+    resolvedCleanly.edit("kept draft");
+    resolvedCleanly.acceptRead(resolvedCleanly.beginRead(), newer);
+    resolvedCleanly.keepDraft();
+    resolvedCleanly.restoreRecovery({
+      revision: newer.revision,
+      locatorVersion: newer.summary.locatorVersion,
+      contents: newer.contents,
+    });
+    expect(resolvedCleanly.getSnapshot()).toMatchObject({
+      draft: newer.contents,
+      disk: null,
+      recovery: null,
+    });
+  });
+
   it("refreshes clean text but retains base, draft and disk across external edits and failures", () => {
     const session = new TaskDocumentSession();
     const base = document("base", "a");
