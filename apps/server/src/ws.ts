@@ -2117,7 +2117,7 @@ export const layerWsRpc = (
                       new OrchestrationV2ThreadLaunchError({
                         commandId: input.commandId,
                         projectId: input.projectId,
-                        message: "Failed to launch thread",
+                        message: ThreadLaunchService.threadLaunchRpcErrorMessage(cause),
                         commandNotAccepted: ThreadMessageIntake.launchCommandWasNotAccepted(cause),
                         cause,
                       }),
@@ -2530,12 +2530,23 @@ export const layerWsRpc = (
               ? serverSettings.updateSettings(nextPatch)
               : serverSettings.updateProviderInstance(providerInstanceMutation, nextPatch);
             const clientSettings = ServerSettings.redactServerSettingsForClient(settings);
-            return patch.newTaskFolder === undefined
-              ? clientSettings
-              : {
-                  ...clientSettings,
-                  newTaskFolderPersisted: clientSettings.newTaskFolder === patch.newTaskFolder,
-                };
+            return {
+              ...clientSettings,
+              ...(patch.newTaskFolder === undefined
+                ? {}
+                : { newTaskFolderPersisted: clientSettings.newTaskFolder === patch.newTaskFolder }),
+              ...(patch.taskStarterTemplate === undefined &&
+              patch.taskUpdateInstructionsPath === undefined
+                ? {}
+                : {
+                    taskStarterSettingsPersisted:
+                      (patch.taskStarterTemplate === undefined ||
+                        clientSettings.taskStarterTemplate === patch.taskStarterTemplate) &&
+                      (patch.taskUpdateInstructionsPath === undefined ||
+                        clientSettings.taskUpdateInstructionsPath ===
+                          patch.taskUpdateInstructionsPath),
+                  }),
+            };
           }),
         [WS_METHODS.serverDiscoverSourceControl]: (_input) => sourceControlDiscovery.discover,
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>

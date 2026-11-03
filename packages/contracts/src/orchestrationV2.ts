@@ -1,5 +1,6 @@
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { TaskDocumentId } from "./taskDocuments.ts";
+import { MAX_TASK_THREAD_INITIALIZATION_TEXT_LENGTH } from "./taskThreadStarter.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -461,6 +462,7 @@ export const TaskThreadInitializationSummary = Schema.Struct({
   canonicalPath: TrimmedNonEmptyString,
   revision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
   templateVersion: PositiveInt,
+  updateInstructionsPath: Schema.optional(TrimmedNonEmptyString),
   status: Schema.Literals(["pending", "running", "ready", "failed"]),
   outcome: Schema.NullOr(Schema.Literals(["ready", "failed"])),
 });
@@ -479,8 +481,9 @@ export const TaskThreadInitializationEnvelope = Schema.Struct({
   canonicalPath: TaskThreadInitializationSummary.fields.canonicalPath,
   revision: TaskThreadInitializationSummary.fields.revision,
   templateVersion: PositiveInt,
+  updateInstructionsPath: TaskThreadInitializationSummary.fields.updateInstructionsPath,
   enrichment: Schema.optional(Schema.Boolean),
-  text: Schema.String.check(Schema.isMaxLength(16000)),
+  text: Schema.String.check(Schema.isMaxLength(MAX_TASK_THREAD_INITIALIZATION_TEXT_LENGTH)),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -505,6 +508,9 @@ export function taskThreadInitializationSummary(
     canonicalPath: value.canonicalPath,
     revision: value.revision,
     templateVersion: value.templateVersion,
+    ...(value.updateInstructionsPath === undefined
+      ? {}
+      : { updateInstructionsPath: value.updateInstructionsPath }),
     status: value.status,
     outcome: value.outcome,
   };

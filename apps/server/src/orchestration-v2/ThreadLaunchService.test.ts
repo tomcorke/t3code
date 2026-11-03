@@ -29,6 +29,7 @@ import {
   ThreadId,
   TaskDocumentId,
   EventId,
+  taskThreadInitializationSummary,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -330,6 +331,26 @@ function launchInput(input: {
   };
 }
 
+it("surfaces authored task launch errors without exposing filesystem causes", () => {
+  const authored = new ThreadLaunch.ThreadLaunchError({
+    operation: "resolve-task",
+    commandId: CommandId.make("task:authored-error"),
+    projectId,
+    cause: "Rendered task starter exceeds its stored text limit.",
+  });
+  assert.equal(
+    ThreadLaunch.threadLaunchRpcErrorMessage(authored),
+    "Rendered task starter exceeds its stored text limit.",
+  );
+  const filesystem = new ThreadLaunch.ThreadLaunchError({
+    operation: "resolve-task",
+    commandId: CommandId.make("task:filesystem-error"),
+    projectId,
+    cause: new Error("C:\\private\\tasks\\secret.md could not be read."),
+  });
+  assert.equal(ThreadLaunch.threadLaunchRpcErrorMessage(filesystem), "Failed to launch thread");
+});
+
 it.effect("keeps task work queued across the create-to-starter gap", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
@@ -577,13 +598,21 @@ it.effect("freezes task launch retries and keeps membership independent of nativ
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
       const threads = yield* ThreadManagement.ThreadManagementService;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const configuredTemplate =
+        "Task {{taskReference}}\nUpdate {{updateInstructionsPath}}\nWorkspace {{workspaceStrategy}}\n{{enrichmentInstructions}}Done";
+      const configuredPath = '/tasks/update"; echo nope.md';
+      yield* settings.updateSettings({
+        taskStarterTemplate: configuredTemplate,
+        taskUpdateInstructionsPath: configuredPath,
+      });
       const { threadId: _unused, ...input } = launchInput({
         command: "task:frozen",
         thread: "unused",
       });
       const request = {
         ...input,
-        task: { taskDocumentId, updateInstructionsPath: "/tasks/update.md" },
+        task: { taskDocumentId, updateInstructionsPath: "/client-path-should-not-win.md" },
       };
       const results = yield* Effect.all(
         [launches.launch(request).pipe(Effect.exit), launches.launch(request).pipe(Effect.exit)],
@@ -597,6 +626,11 @@ it.effect("freezes task launch retries and keeps membership independent of nativ
       for (const result of results)
         if (Exit.isSuccess(result)) assert.equal(result.value.threadId, first.threadId);
       const frozen = first.projection.thread.taskInitialization;
+      assert.equal(frozen?.templateVersion, 2);
+      assert.equal(frozen?.updateInstructionsPath, configuredPath);
+      assert.equal(taskThreadInitializationSummary(frozen)?.updateInstructionsPath, configuredPath);
+      assert.include(frozen?.text, `Update ${JSON.stringify(configuredPath)}`);
+      assert.notInclude(frozen?.text, "/client-path-should-not-win.md");
       const beforeRetry = yield* Ref.get(reads);
       const retry = yield* launches.launch({
         ...request,
@@ -610,6 +644,26 @@ it.effect("freezes task launch retries and keeps membership independent of nativ
       assert.equal(yield* Ref.get(reads), beforeRetry);
       assert.equal(retry.projection.messages.length, 1);
       assert.equal(retry.projection.runs.length, 1);
+      const changedTemplate = `${configuredTemplate}\nUpdated.`;
+      yield* settings.updateSettings({
+        taskStarterTemplate: changedTemplate,
+        taskUpdateInstructionsPath: "/tasks/new-update.md",
+      });
+      const nextThread = yield* launches.launch({
+        ...request,
+        commandId: CommandId.make("task:updated-template"),
+        title: "Updated task thread",
+      });
+      assert.equal(nextThread.projection.thread.taskInitialization?.templateVersion, 3);
+      assert.equal(
+        nextThread.projection.thread.taskInitialization?.updateInstructionsPath,
+        "/tasks/new-update.md",
+      );
+      assert.include(nextThread.projection.thread.taskInitialization?.text, "Updated.");
+      assert.include(
+        nextThread.projection.thread.taskInitialization?.text,
+        'Update "/tasks/new-update.md"',
+      );
       const enriched = yield* launches.launch({
         ...request,
         commandId: CommandId.make("task:enriched"),
@@ -688,6 +742,52 @@ it.effect("freezes task launch retries and keeps membership independent of nativ
     }).pipe(Effect.provide(harness.layer));
   }),
 );
+
+it.effect("rejects a rendered task starter that exceeds its stored text limit", () => {
+  const taskDocumentId = TaskDocumentId.make("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+  const harness = makeHarness({
+    openTask: () =>
+      Effect.succeed({
+        summary: {
+          taskDocumentId,
+          canonicalPath: "/tasks/context.md",
+          locatorVersion: 0,
+          observedFileId: null,
+          registered: true,
+          title: "Task",
+          state: null,
+          pinned: false,
+          availability: "available" as const,
+          revision: "a".repeat(64),
+        },
+        contents: "Synthetic task contents",
+        revision: "a".repeat(64),
+      }),
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const template = `${DEFAULT_SERVER_SETTINGS.taskStarterTemplate}\n${"x".repeat(
+      8_000 - DEFAULT_SERVER_SETTINGS.taskStarterTemplate.length - 1,
+    )}`;
+    assert.equal(template.length, 8_000);
+    yield* settings.updateSettings({ taskStarterTemplate: template });
+    const input = launchInput({
+      command: "task:oversized",
+      thread: "task:oversized",
+      workspace: { type: "root", branch: "b".repeat(9_000) },
+    });
+    const failure = yield* launches
+      .launch({
+        ...input,
+        task: { taskDocumentId, updateInstructionsPath: "/tasks/update.md" },
+      })
+      .pipe(Effect.flip);
+    assert.include(String(failure.cause), "Rendered task starter exceeds");
+    assert.isNull(yield* threads.getThreadShell(input.threadId));
+  }).pipe(Effect.provide(harness.layer));
+});
 
 it.effect("rejects a stale task starter when retry replaces its attempt before dispatch", () => {
   const taskDocumentId = TaskDocumentId.make("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
@@ -790,6 +890,7 @@ it.effect(
     return Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
       const threads = yield* ThreadManagement.ThreadManagementService;
+      const settings = yield* ServerSettings.ServerSettingsService;
       const input = launchInput({ command: "task:stranded", thread: "task:stranded" });
       yield* threads.dispatch({
         ...input,
@@ -818,6 +919,10 @@ it.effect(
         commandId: CommandId.make("task:stranded-snooze"),
         snoozedUntil: "2030-01-01T00:00:00.000Z",
       });
+      yield* settings.updateSettings({
+        taskStarterTemplate: `${DEFAULT_SERVER_SETTINGS.taskStarterTemplate}\nChanged for new threads.`,
+        taskUpdateInstructionsPath: "/tasks/changed-update.md",
+      });
       const retried = yield* launches.launch({
         ...input,
         commandId: CommandId.make("task:stranded-retry"),
@@ -829,7 +934,9 @@ it.effect(
       const thread = retried.projection.thread;
       assert.equal(thread.taskInitialization?.attemptId, "task:stranded-retry");
       assert.equal(thread.taskInitialization?.enrichment, true);
-      assert.include(thread.taskInitialization?.text, "Source prompt");
+      assert.equal(thread.taskInitialization?.templateVersion, 1);
+      assert.equal(thread.taskInitialization?.updateInstructionsPath, undefined);
+      assert.equal(thread.taskInitialization?.text, "Read the task and wait.");
       assert.equal(thread.taskInitialization?.title, thread.title);
       assert.equal(thread.taskInitialization?.interactionMode, thread.interactionMode);
       assert.notEqual(thread.interactionMode, "plan");

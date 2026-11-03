@@ -316,6 +316,24 @@ it("defaults and accepts the environment's new-task folder", () => {
   });
 });
 
+it("defaults task starter settings and requires the data placeholders in template patches", () => {
+  const settings = decodeServerSettings({});
+  expect(settings.taskStarterTemplate).toBe(DEFAULT_SERVER_SETTINGS.taskStarterTemplate);
+  expect(settings.taskStarterTemplateVersion).toBe(1);
+  expect(settings.taskUpdateInstructionsPath).toBe("");
+  expect(decodeServerSettingsPatch({ taskUpdateInstructionsPath: " C:/tasks/UPDATE.md " })).toEqual(
+    { taskUpdateInstructionsPath: "C:/tasks/UPDATE.md" },
+  );
+  expect(() =>
+    decodeServerSettingsPatch({
+      taskStarterTemplate: DEFAULT_SERVER_SETTINGS.taskStarterTemplate.replace(
+        "{{taskReference}}",
+        "",
+      ),
+    }),
+  ).toThrow();
+});
+
 it("keeps the new-task-folder persistence marker optional for older servers", () => {
   expect(decodeServerSettingsUpdateResult({}).newTaskFolderPersisted).toBeUndefined();
   expect(

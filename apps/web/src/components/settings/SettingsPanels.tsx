@@ -97,6 +97,7 @@ import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { PullRequestLinksOpenInAppSetting } from "./IntegrationsSettings";
 import { StorageCleanupSections } from "./StorageSettings";
+import { TaskStarterSettingsSection } from "./TaskStarterSettingsSection";
 import { UpdateTrackSwitchDialog } from "./UpdateTrackSwitchDialog";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentSessionStatesAtom } from "~/state/session";
@@ -1569,6 +1570,15 @@ export function ThreadsSettingsPanel() {
       </SettingsSection>
 
       <ProjectDefaultsSettings category="general" />
+
+      {!isProjectScope ? (
+        <TaskStarterSettingsSection
+          environments={connectedEnvironments.map(({ environmentId, label }) => ({
+            environmentId,
+            label,
+          }))}
+        />
+      ) : null}
 
       {!isProjectScope ? (
         <SettingsSection id="snooze" title="Snooze">

@@ -1,6 +1,9 @@
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as TaskDocuments from "../tasks/TaskDocuments.ts";
-import { taskThreadStarter, TASK_THREAD_TEMPLATE_VERSION } from "../tasks/taskThreadStarter.ts";
+import {
+  MAX_TASK_THREAD_INITIALIZATION_TEXT_LENGTH,
+  renderTaskThreadStarter,
+} from "@t3tools/contracts";
 import * as FileSystem from "effect/FileSystem";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
@@ -162,6 +165,12 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
   override get message(): string {
     return `Thread launch ${this.commandId} failed during ${this.operation}.`;
   }
+}
+
+export function threadLaunchRpcErrorMessage(error: ThreadLaunchError): string {
+  return error.operation === "resolve-task" && typeof error.cause === "string"
+    ? error.cause
+    : "Failed to launch thread";
 }
 
 export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBaseRefError>()(
@@ -952,45 +961,81 @@ const make = Effect.gen(function* () {
             "resolve-task",
           )("Task launch accepts its starter only; send user work after launch.");
         }
-        const document = yield* taskDocuments
-          .open({ taskDocumentId: task.taskDocumentId })
-          .pipe(Effect.mapError(mapError(input, "resolve-task")));
-        const updateInstructionsPath = yield* fs
-          .realPath(task.updateInstructionsPath)
-          .pipe(Effect.mapError(mapError(input, "resolve-task")));
-        yield* fs
-          .access(updateInstructionsPath, { readable: true })
-          .pipe(Effect.mapError(mapError(input, "resolve-task")));
-        // A retry re-sends no enrichment choice; it keeps what the first attempt froze.
-        const enrichment =
-          task.enrichment ??
-          (input.retryTaskInitialization === true && priorThread !== null
+        const previousInitialization =
+          input.retryTaskInitialization === true && priorThread !== null
             ? (yield* threads
                 .getThreadRecords(priorThread.id, [])
                 .pipe(Effect.mapError(mapError(input, "read-receipt", priorThread.id)))).thread
-                .taskInitialization?.enrichment
-            : undefined);
-        initialization = {
-          attemptId: input.commandId,
-          messageId: MessageIdSchema.make(`${input.commandId}:task-initialization`),
-          canonicalPath: document.summary.canonicalPath,
-          revision: document.revision,
-          templateVersion: TASK_THREAD_TEMPLATE_VERSION,
-          ...(enrichment === true ? { enrichment } : {}),
-          text: taskThreadStarter({
-            ...task,
-            enrichment,
+                .taskInitialization
+            : null;
+        if (previousInitialization != null) {
+          initialization = {
+            attemptId: input.commandId,
+            messageId: MessageIdSchema.make(`${input.commandId}:task-initialization`),
+            canonicalPath: previousInitialization.canonicalPath,
+            revision: previousInitialization.revision,
+            templateVersion: previousInitialization.templateVersion,
+            ...(previousInitialization.updateInstructionsPath === undefined
+              ? {}
+              : { updateInstructionsPath: previousInitialization.updateInstructionsPath }),
+            ...(previousInitialization.enrichment === true
+              ? { enrichment: previousInitialization.enrichment }
+              : {}),
+            text: previousInitialization.text,
+            workspaceStrategy: input.workspaceStrategy,
+            modelSelection: input.modelSelection,
+            runtimeMode: priorThread?.runtimeMode ?? previousInitialization.runtimeMode,
+            interactionMode: priorThread?.interactionMode ?? previousInitialization.interactionMode,
+            title: priorThread?.title ?? previousInitialization.title,
+          };
+        } else {
+          const document = yield* taskDocuments
+            .open({ taskDocumentId: task.taskDocumentId })
+            .pipe(Effect.mapError(mapError(input, "resolve-task")));
+          const settings = yield* serverSettings.getSettings.pipe(
+            Effect.mapError(mapError(input, "resolve-task")),
+          );
+          const updateInstructionsInput =
+            settings.taskUpdateInstructionsPath || task.updateInstructionsPath;
+          const updateInstructionsPath = yield* fs
+            .realPath(updateInstructionsInput)
+            .pipe(Effect.mapError(mapError(input, "resolve-task")));
+          yield* fs
+            .access(updateInstructionsPath, { readable: true })
+            .pipe(Effect.mapError(mapError(input, "resolve-task")));
+          const text = renderTaskThreadStarter({
+            template: settings.taskStarterTemplate,
+            taskDocumentId: task.taskDocumentId,
             canonicalPath: document.summary.canonicalPath,
             updateInstructionsPath,
             workspaceStrategy: input.workspaceStrategy,
-          }),
-          workspaceStrategy: input.workspaceStrategy,
-          modelSelection: input.modelSelection,
-          // Neither retry nor draft reuse applies these to an existing thread.
-          runtimeMode: priorThread?.runtimeMode ?? input.runtimeMode,
-          interactionMode: priorThread?.interactionMode ?? input.interactionMode,
-          title: priorThread?.title ?? input.title,
-        };
+            enrichment: task.enrichment,
+          });
+          if (text.length > MAX_TASK_THREAD_INITIALIZATION_TEXT_LENGTH) {
+            return yield* mapError(
+              input,
+              "resolve-task",
+            )(
+              `Rendered task starter exceeds ${MAX_TASK_THREAD_INITIALIZATION_TEXT_LENGTH} characters. Shorten the template or paths.`,
+            );
+          }
+          initialization = {
+            attemptId: input.commandId,
+            messageId: MessageIdSchema.make(`${input.commandId}:task-initialization`),
+            canonicalPath: document.summary.canonicalPath,
+            revision: document.revision,
+            templateVersion: settings.taskStarterTemplateVersion,
+            updateInstructionsPath,
+            ...(task.enrichment === true ? { enrichment: task.enrichment } : {}),
+            text,
+            workspaceStrategy: input.workspaceStrategy,
+            modelSelection: input.modelSelection,
+            // Neither retry nor draft reuse applies these to an existing thread.
+            runtimeMode: priorThread?.runtimeMode ?? input.runtimeMode,
+            interactionMode: priorThread?.interactionMode ?? input.interactionMode,
+            title: priorThread?.title ?? input.title,
+          };
+        }
       }
       if (
         input.retryTaskInitialization === true &&

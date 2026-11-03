@@ -87,7 +87,7 @@ import {
   previewAnnotationContextReference,
 } from "../../lib/composerContextRecords";
 import { environmentServerConfigsAtom } from "../../state/server";
-import { readTaskUpdateInstructionsPath } from "../../state/taskDocuments";
+import { readLegacyTaskUpdateInstructionsPath } from "../../state/taskDocuments";
 import { useNewTaskStore } from "../../newTaskStore";
 import { threadEnvironment } from "../../state/threads";
 import { runMobileComposerTransition } from "./draftHeroTransition";
@@ -501,7 +501,12 @@ export function useComposerSend(input: ComposerSendInput) {
         ? undefined
         : useNewTaskStore.getState().byId[draftTaskDocumentId];
     const taskUpdateInstructionsPath =
-      draftTaskDocumentId === null ? null : readTaskUpdateInstructionsPath(environmentId);
+      draftTaskDocumentId === null
+        ? null
+        : readEnvironmentPresentation(
+            environmentId,
+          )?.serverConfig?.settings.taskUpdateInstructionsPath.trim() ||
+          readLegacyTaskUpdateInstructionsPath(environmentId);
     if (draftTaskDocumentId !== null && taskUpdateInstructionsPath === null) {
       setThreadError(
         activeThread.id,
