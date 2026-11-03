@@ -51,7 +51,7 @@ export function TaskDocumentRecoveryDialog(props: {
   const restore = () => {
     if (selected === null) return;
     if (props.onRestore(selected)) props.onClose();
-    else setError("This recovery copy could not be restored. Reload the task and try again.");
+    else setError("This recovery copy could not be restored. Try again in a moment.");
   };
 
   return (

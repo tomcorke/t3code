@@ -143,7 +143,7 @@ export class TaskDocumentSession<TEditorView = unknown> {
     if (base === null || this.activeSave !== null) return false;
     if (recovery.contents === base.contents) {
       this.persistedBase = null;
-      this.update({ draft: base.contents, disk, error: null });
+      this.update({ draft: base.contents, disk, error: null, recovery: null });
       return true;
     }
     this.persistedBase = { revision: recovery.revision, locatorVersion: recovery.locatorVersion };
@@ -154,6 +154,7 @@ export class TaskDocumentSession<TEditorView = unknown> {
       draft: recovery.contents,
       disk: disk ?? (diskChanged ? base : null),
       error: null,
+      recovery: null,
     });
     return true;
   }

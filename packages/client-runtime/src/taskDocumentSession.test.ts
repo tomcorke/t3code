@@ -88,6 +88,40 @@ describe("task document sessions", () => {
       disk: newer,
     });
     expect(conflicted.beginSave()).toBeNull();
+
+    const resolvedConflict = new TaskDocumentSession();
+    resolvedConflict.acceptRead(resolvedConflict.beginRead(), current);
+    resolvedConflict.edit("kept draft");
+    resolvedConflict.acceptRead(resolvedConflict.beginRead(), newer);
+    resolvedConflict.keepDraft();
+    expect(resolvedConflict.getSnapshot().recovery).not.toBeNull();
+    resolvedConflict.restoreRecovery({
+      revision: current.revision,
+      locatorVersion: current.summary.locatorVersion,
+      contents: "restored server draft",
+    });
+    expect(resolvedConflict.getSnapshot()).toMatchObject({
+      base: newer,
+      draft: "restored server draft",
+      disk: newer,
+      recovery: null,
+    });
+
+    const resolvedCleanly = new TaskDocumentSession();
+    resolvedCleanly.acceptRead(resolvedCleanly.beginRead(), current);
+    resolvedCleanly.edit("kept draft");
+    resolvedCleanly.acceptRead(resolvedCleanly.beginRead(), newer);
+    resolvedCleanly.keepDraft();
+    resolvedCleanly.restoreRecovery({
+      revision: newer.revision,
+      locatorVersion: newer.summary.locatorVersion,
+      contents: newer.contents,
+    });
+    expect(resolvedCleanly.getSnapshot()).toMatchObject({
+      draft: newer.contents,
+      disk: null,
+      recovery: null,
+    });
   });
 
   it("refreshes clean text but retains base, draft and disk across external edits and failures", () => {
