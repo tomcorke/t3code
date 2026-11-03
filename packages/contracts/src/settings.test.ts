@@ -16,6 +16,7 @@ import {
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
+  ServerSettingsUpdateResult,
   withIdleCompaction,
 } from "./settings.ts";
 
@@ -24,6 +25,7 @@ const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
+const decodeServerSettingsUpdateResult = Schema.decodeUnknownSync(ServerSettingsUpdateResult);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
@@ -304,6 +306,21 @@ describe("ServerSettings worktree defaults", () => {
       encode(decodeServerSettings({ defaultThreadEnvMode: "worktree" })).defaultThreadEnvMode,
     ).toBe("worktree");
   });
+});
+
+it("defaults and accepts the environment's new-task folder", () => {
+  expect(decodeServerSettings({}).newTaskFolder).toBe("");
+  expect(decodeServerSettings({ newTaskFolder: "  C:/tasks  " }).newTaskFolder).toBe("C:/tasks");
+  expect(decodeServerSettingsPatch({ newTaskFolder: "  C:/tasks  " })).toEqual({
+    newTaskFolder: "C:/tasks",
+  });
+});
+
+it("keeps the new-task-folder persistence marker optional for older servers", () => {
+  expect(decodeServerSettingsUpdateResult({}).newTaskFolderPersisted).toBeUndefined();
+  expect(
+    decodeServerSettingsUpdateResult({ newTaskFolderPersisted: true }).newTaskFolderPersisted,
+  ).toBe(true);
 });
 
 describe("ServerSettings.sourceControlWritingStyle", () => {

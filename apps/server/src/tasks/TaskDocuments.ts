@@ -38,6 +38,7 @@ import {
   type TaskDocumentNotice,
 } from "@t3tools/contracts";
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 export class TaskDocuments extends Context.Service<
   TaskDocuments,
@@ -48,7 +49,7 @@ export class TaskDocuments extends Context.Service<
     readonly create: (
       input: CreateTaskDocumentInput,
     ) => Effect.Effect<OpenTaskDocument, TaskDocumentOperationError>;
-    readonly defaultFolder: () => Effect.Effect<TaskDocumentFolder>;
+    readonly defaultFolder: () => Effect.Effect<TaskDocumentFolder, TaskDocumentOperationError>;
     readonly open: (
       input: TaskDocumentRef,
     ) => Effect.Effect<OpenTaskDocument, TaskDocumentOperationError>;
@@ -165,6 +166,7 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const sql = yield* SqlClient.SqlClient;
   const config = yield* ServerConfig.ServerConfig;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const recoveryRoot = path.join(config.stateDir, "task-document-recovery");
   // ponytail: one lock serializes registry changes and saves; use per-target locks if save throughput warrants it.
   const lock = yield* Semaphore.make(1);
@@ -384,7 +386,10 @@ const make = Effect.gen(function* () {
     (input: RegisterTaskDocumentInput) => registerFile(input),
     lock.withPermit,
   );
-  const defaultFolder = () => Effect.succeed({ directory: path.join(config.baseDir, "tasks") });
+  const defaultFolder = Effect.fn("TaskDocuments.defaultFolder")(function* () {
+    const { newTaskFolder } = yield* serverSettings.getSettings.pipe(Effect.mapError(ioError));
+    return { directory: newTaskFolder || path.join(config.baseDir, "tasks") };
+  });
   const create = Effect.fn("TaskDocuments.create")(function* (input: CreateTaskDocumentInput) {
     const existing = (yield* rows()).find((row) => row.taskDocumentId === input.taskDocumentId);
     if (existing) return yield* open(existing);

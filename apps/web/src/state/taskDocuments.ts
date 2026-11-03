@@ -3,7 +3,11 @@ import * as Schema from "effect/Schema";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import { connectionAtomRuntime } from "../connection/runtime";
-import { getLocalStorageItem, setLocalStorageItem } from "../hooks/useLocalStorage";
+import {
+  getLocalStorageItem,
+  removeLocalStorageItem,
+  setLocalStorageItem,
+} from "../hooks/useLocalStorage";
 
 export const taskDocumentEnvironment = createTaskDocumentEnvironmentAtoms(connectionAtomRuntime);
 
@@ -17,11 +21,12 @@ export const readTaskUpdateInstructionsPath = (environmentId: EnvironmentId) =>
 export const writeTaskUpdateInstructionsPath = (environmentId: EnvironmentId, path: string) =>
   setLocalStorageItem(updateInstructionsKey(environmentId), path.trim(), Schema.String);
 
-const folderKey = (environmentId: EnvironmentId) => `t3code:task-folder:${environmentId}`;
+const legacyTaskFolderKey = (environmentId: EnvironmentId) => `t3code:task-folder:${environmentId}`;
 
-/** Where this client last asked an environment to create task files; empty means its managed folder. */
-export const readTaskFolder = (environmentId: EnvironmentId) =>
-  getLocalStorageItem(folderKey(environmentId), Schema.String)?.trim() || null;
+/** Read only to carry an existing browser preference into the server setting. */
+export const readLegacyTaskFolder = (environmentId: EnvironmentId) =>
+  getLocalStorageItem(legacyTaskFolderKey(environmentId), Schema.String)?.trim() || null;
 
-export const writeTaskFolder = (environmentId: EnvironmentId, path: string) =>
-  setLocalStorageItem(folderKey(environmentId), path.trim(), Schema.String);
+/** Retire the browser preference once its value has been saved to the environment. */
+export const removeLegacyTaskFolder = (environmentId: EnvironmentId) =>
+  removeLocalStorageItem(legacyTaskFolderKey(environmentId));

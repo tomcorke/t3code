@@ -362,7 +362,7 @@ import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from ".
 import {
   StorageCleanupReport,
   DatabaseStorageStatus,
-  ServerSettings,
+  ServerSettingsUpdateResult,
   ServerSettingsError,
   ServerSettingsPatch,
 } from "./settings.ts";
@@ -832,7 +832,7 @@ const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
     patch: ServerSettingsPatch,
     providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
   }),
-  success: ServerSettings,
+  success: ServerSettingsUpdateResult,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
