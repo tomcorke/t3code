@@ -410,21 +410,27 @@ const make = Effect.gen(function* () {
     const base = `TASK-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}-${slug}`;
     for (let attempt = 1; attempt <= 100; attempt++) {
       const created = path.join(directory, `${base}${attempt === 1 ? "" : `-${attempt}`}.md`);
-      const written = yield* fs.writeFileString(created, contents, { flag: "wx" }).pipe(
-        Effect.as(true),
-        Effect.catchTags({
-          PlatformError: (cause) =>
-            cause.reason._tag === "AlreadyExists"
-              ? Effect.succeed(false)
-              : Effect.fail(ioError(cause)),
-        }),
-      );
-      if (!written) continue;
-      return yield* registerFile({ path: created }).pipe(
-        // onExit, not tapError: an interrupted request must not leave an unregistered file carrying the id.
-        // A row that already exists owns the file, so a later retry finds it instead of a missing one.
+      let createdByUs = false;
+      const result = yield* Effect.scoped(
+        Effect.uninterruptible(
+          fs.open(created, { flag: "wx" }).pipe(
+            Effect.map((handle) => {
+              createdByUs = true;
+              return handle;
+            }),
+          ),
+        ).pipe(
+          Effect.flatMap((handle) =>
+            handle
+              .writeAll(encode(contents))
+              .pipe(Effect.mapError(ioError), Effect.andThen(registerFile({ path: created }))),
+          ),
+        ),
+      ).pipe(
+        // The exclusive handle proves ownership before any write can fail or be interrupted.
+        // A registration row owns the file even if later work in registration fails.
         Effect.onExit((exit) =>
-          Exit.isSuccess(exit)
+          !createdByUs || Exit.isSuccess(exit)
             ? Effect.void
             : rows().pipe(
                 Effect.flatMap((all) =>
@@ -435,7 +441,14 @@ const make = Effect.gen(function* () {
                 Effect.ignore,
               ),
         ),
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            cause.reason._tag === "AlreadyExists"
+              ? Effect.succeed(null)
+              : Effect.fail(ioError(cause)),
+        }),
       );
+      if (result !== null) return result;
     }
     return yield* new TaskDocumentError({ reason: "io" });
   }, lock.withPermit);

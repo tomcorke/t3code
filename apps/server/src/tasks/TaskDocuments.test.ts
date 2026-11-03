@@ -669,6 +669,95 @@ describe("TaskDocuments", () => {
       }).pipe(Effect.scoped, Effect.provide(layer)),
     );
 
+    it.effect("removes an interrupted partial task write so the same task can be retried", () =>
+      Effect.gen(function* () {
+        const { fs, directory, service } = yield* setup;
+        const enteredWrite = yield* Deferred.make<void>();
+        const waitForWrite = yield* Deferred.make<void>();
+        const pauseAfterPartialWrite = <A>(write: Effect.Effect<A, PlatformError.PlatformError>) =>
+          write.pipe(
+            Effect.andThen(Deferred.succeed(enteredWrite, undefined)),
+            Effect.andThen(Deferred.await(waitForWrite)),
+          );
+        const interruptedFs = FileSystem.FileSystem.of({
+          ...fs,
+          writeFileString: (file, contents, options) =>
+            file.startsWith(directory) && options?.flag === "wx"
+              ? pauseAfterPartialWrite(fs.writeFileString(file, contents.slice(0, 1), options))
+              : fs.writeFileString(file, contents, options),
+          open: (file, options) =>
+            fs.open(file, options).pipe(
+              Effect.map((handle) =>
+                file.startsWith(directory) && options?.flag === "wx"
+                  ? new Proxy(handle, {
+                      get: (fileHandle, key) =>
+                        key === "writeAll"
+                          ? (contents: Uint8Array) =>
+                              pauseAfterPartialWrite(fileHandle.writeAll(contents.slice(0, 1)))
+                          : Reflect.get(fileHandle, key),
+                    })
+                  : handle,
+              ),
+            ),
+        });
+        const interruptedService = Context.get(
+          yield* Layer.build(
+            Layer.fresh(
+              TaskDocuments.layer.pipe(
+                Layer.provide(Layer.succeed(FileSystem.FileSystem, interruptedFs)),
+              ),
+            ),
+          ),
+          TaskDocuments.TaskDocuments,
+        );
+        const create = input("000000000014", directory);
+
+        const creating = yield* interruptedService.create(create).pipe(Effect.forkScoped);
+        yield* Deferred.await(enteredWrite);
+        yield* Fiber.interrupt(creating);
+        expect(yield* taskFiles(fs, directory)).toEqual([]);
+
+        const retry = yield* service.create(create);
+        expect(retry.summary.taskDocumentId).toBe(create.taskDocumentId);
+        expect(yield* taskFiles(fs, directory)).toHaveLength(1);
+        expect(yield* fs.readFileString(retry.summary.canonicalPath)).toBe(retry.contents);
+
+        let reads = 0;
+        const failAfterRegistration = PlatformError.systemError({
+          _tag: "Unknown",
+          module: "FileSystem",
+          method: "open",
+          pathOrDescriptor: directory,
+        });
+        const registeredFailureFs = FileSystem.FileSystem.of({
+          ...fs,
+          open: (file, options) => {
+            if (file.startsWith(directory) && options?.flag === "r" && ++reads === 2)
+              return Effect.fail(failAfterRegistration);
+            return fs.open(file, options);
+          },
+        });
+        const registeredFailureService = Context.get(
+          yield* Layer.build(
+            Layer.fresh(
+              TaskDocuments.layer.pipe(
+                Layer.provide(Layer.succeed(FileSystem.FileSystem, registeredFailureFs)),
+              ),
+            ),
+          ),
+          TaskDocuments.TaskDocuments,
+        );
+        const ownedTask = input("000000000015", directory);
+        expect(yield* registeredFailureService.create(ownedTask).pipe(Effect.flip)).toMatchObject({
+          reason: "io",
+        });
+        expect(yield* taskFiles(fs, directory)).toHaveLength(2);
+        expect(yield* service.create(ownedTask)).toMatchObject({
+          summary: { taskDocumentId: ownedTask.taskDocumentId, registered: true },
+        });
+      }).pipe(Effect.scoped, Effect.provide(layer)),
+    );
+
     it.effect("leaves no file or registration when creation fails", () =>
       Effect.gen(function* () {
         const { fs, directory, service, target } = yield* setup;
