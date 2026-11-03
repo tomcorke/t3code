@@ -1,4 +1,10 @@
-import { EnvironmentId, TaskDocumentId, type OpenTaskDocument } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  TaskDocumentId,
+  type OpenTaskDocument,
+  type TaskDocumentRecovery,
+  type TaskDocumentRecoveryRef,
+} from "@t3tools/contracts";
 import { useAtomSet } from "@effect/atom-react";
 import { type Atom, AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
@@ -10,7 +16,9 @@ const state = vi.hoisted(() => ({
   supported: true,
   generationAtom: null as never as Atom.Writable<number>,
   list: vi.fn(),
+  listRecovery: vi.fn(),
   open: vi.fn(),
+  readRecovery: vi.fn(),
   save: vi.fn(),
   documents: new Map<string, OpenTaskDocument>(),
 }));
@@ -35,18 +43,41 @@ vi.mock(import("~/state/taskDocuments"), async () => {
   return {
     taskDocumentEnvironment: {
       ...Object.fromEntries(
-        ["register", "create", "open", "list", "save", "relink"].map((name) => [
-          name,
-          { name, permissionAtom: () => permitted },
-        ]),
+        [
+          "register",
+          "create",
+          "open",
+          "list",
+          "listRecovery",
+          "readRecovery",
+          "save",
+          "relink",
+        ].map((name) => [name, { name, permissionAtom: () => permitted }]),
       ),
       catalogueChanges: ({ environmentId }: { environmentId: string }) => ({ environmentId }),
       documentChanges: ({ input }: { input: { taskDocumentId: string } }) => input,
     } as never,
+    readTaskDocumentDraft: ((environmentId: string, documentId: string) => {
+      const value = localStorage.getItem(
+        `t3code:task-document-draft:v1:${environmentId}:${documentId}`,
+      );
+      return value === null ? null : JSON.parse(value);
+    }) as never,
+    writeTaskDocumentDraft: ((environmentId: string, documentId: string, draft: unknown) =>
+      localStorage.setItem(
+        `t3code:task-document-draft:v1:${environmentId}:${documentId}`,
+        JSON.stringify(draft),
+      )) as never,
+    removeTaskDocumentDraft: ((environmentId: string, documentId: string) =>
+      localStorage.removeItem(
+        `t3code:task-document-draft:v1:${environmentId}:${documentId}`,
+      )) as never,
   };
 });
 vi.mock(import("~/state/use-atom-command"), () => ({
-  useAtomCommand: ((command: { name: "list" | "open" | "save" }) => state[command.name]) as never,
+  useAtomCommand: ((command: {
+    name: "list" | "listRecovery" | "open" | "readRecovery" | "save";
+  }) => state[command.name]) as never,
 }));
 vi.mock(import("~/state/query"), () => ({
   useEnvironmentQuery: ((query: { taskDocumentId?: string } | null) => ({
@@ -84,8 +115,11 @@ function document(contents: string, revision: string): OpenTaskDocument {
 function setup() {
   state.supported = true;
   state.list.mockReset();
+  state.listRecovery.mockReset();
   state.open.mockReset();
+  state.readRecovery.mockReset();
   state.save.mockReset();
+  state.listRecovery.mockResolvedValue(AsyncResult.success([]));
   state.documents.clear();
 }
 
@@ -108,17 +142,29 @@ function Catalogue({ environmentId }: { environmentId: EnvironmentId }) {
   );
 }
 
-function Document() {
-  const { state, session, save, canRead, canSave } = useTaskDocument(
-    EnvironmentId.make("save-race"),
-    taskDocumentId,
-  );
+function Document({ environmentId = "save-race" }: { environmentId?: string }) {
+  const { state, session, save, canRead, canSave, recoveryRecords, restoreRecovery } =
+    useTaskDocument(EnvironmentId.make(environmentId), taskDocumentId);
+  const restore = () => {
+    const recovery: TaskDocumentRecovery = {
+      taskDocumentId,
+      recoveryId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      expectedRevision: "a".repeat(64),
+      locatorVersion: 0,
+      baseContents: "base",
+      contents: "server recovery draft",
+      disk: null,
+    };
+    restoreRecovery(recovery);
+  };
   return (
     <>
       <output aria-label="Draft">{state.draft}</output>
       <output aria-label="Access">{`${canRead}:${canSave}`}</output>
+      <output aria-label="Recovery count">{recoveryRecords.length}</output>
       <button onClick={() => session.edit("saved draft")}>Edit</button>
       <button onClick={() => void save()}>Save</button>
+      <button onClick={restore}>Restore recovery</button>
     </>
   );
 }
@@ -160,4 +206,25 @@ it("refreshes a change received during save and stops document access on an unsu
   state.supported = false;
   await screen.rerender(<Document />);
   await expect.element(screen.getByLabelText("Access")).toHaveTextContent("false:false");
+});
+
+it("persists dirty task drafts in browser storage and lists and restores server recovery records", async () => {
+  setup();
+  const environmentId = "issue-12-recovery";
+  const storageKey = `t3code:task-document-draft:v1:${environmentId}:${taskDocumentId}`;
+  localStorage.removeItem(storageKey);
+  state.documents.set(taskDocumentId, document("base", "a"));
+  const recoveryRef: TaskDocumentRecoveryRef = {
+    taskDocumentId,
+    recoveryId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  };
+  state.listRecovery.mockResolvedValue(AsyncResult.success([recoveryRef]));
+  await using screen = await render(<Document environmentId={environmentId} />);
+  await expect.element(screen.getByLabelText("Recovery count")).toHaveTextContent("1");
+  await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+  await vi.waitFor(() => expect(localStorage.getItem(storageKey)).not.toBeNull());
+  expect(localStorage.getItem(storageKey)).toContain("saved draft");
+
+  await userEvent.click(screen.getByRole("button", { name: "Restore recovery" }));
+  await expect.element(screen.getByLabelText("Draft")).toHaveTextContent("server recovery draft");
 });

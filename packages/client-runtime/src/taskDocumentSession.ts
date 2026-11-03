@@ -1,5 +1,11 @@
 import type { OpenTaskDocument, SaveTaskDocumentInput } from "@t3tools/contracts";
 
+export interface PersistedTaskDocumentDraft {
+  readonly revision: string;
+  readonly locatorVersion: number;
+  readonly contents: string;
+}
+
 export interface TaskDocumentView<TEditorView> {
   readonly editor: TEditorView | null;
   readonly scrollTop: number;
@@ -19,6 +25,7 @@ export interface TaskDocumentSessionState<TEditorView> {
   readonly disk: OpenTaskDocument | null;
   readonly recovery: TaskDocumentRecovery | null;
   readonly error: string | null;
+  readonly persistenceError: string | null;
   readonly saving: boolean;
   readonly view: TaskDocumentView<TEditorView>;
 }
@@ -31,6 +38,8 @@ interface TaskDocumentSave {
 export class TaskDocumentSession<TEditorView = unknown> {
   private generation = 0;
   private activeSave: TaskDocumentSave | null = null;
+  private pendingPersistedDraft: PersistedTaskDocumentDraft | null;
+  private persistedBase: Pick<PersistedTaskDocumentDraft, "revision" | "locatorVersion"> | null;
   private listeners = new Set<() => void>();
   private state: TaskDocumentSessionState<TEditorView> = {
     base: null,
@@ -38,9 +47,17 @@ export class TaskDocumentSession<TEditorView = unknown> {
     disk: null,
     recovery: null,
     error: null,
+    persistenceError: null,
     saving: false,
     view: { editor: null, scrollTop: 0, rendered: false },
   };
+
+  constructor(persistedDraft: PersistedTaskDocumentDraft | null = null) {
+    this.pendingPersistedDraft = persistedDraft;
+    this.persistedBase = persistedDraft
+      ? { revision: persistedDraft.revision, locatorVersion: persistedDraft.locatorVersion }
+      : null;
+  }
 
   getSnapshot = () => this.state;
 
@@ -64,6 +81,25 @@ export class TaskDocumentSession<TEditorView = unknown> {
     if (generation !== this.generation || this.activeSave !== null) return;
     const { base, draft } = this.state;
     if (base === null || draft === base.contents) {
+      const pendingDraft = this.pendingPersistedDraft;
+      this.pendingPersistedDraft = null;
+      if (pendingDraft && pendingDraft.contents !== document.contents) {
+        this.persistedBase = {
+          revision: pendingDraft.revision,
+          locatorVersion: pendingDraft.locatorVersion,
+        };
+        const diskChanged =
+          pendingDraft.revision !== document.revision ||
+          pendingDraft.locatorVersion !== document.summary.locatorVersion;
+        this.update({
+          base: document,
+          draft: pendingDraft.contents,
+          disk: diskChanged ? document : null,
+          error: null,
+        });
+        return;
+      }
+      this.persistedBase = null;
       this.update({ base: document, draft: document.contents, disk: null, error: null });
     } else {
       this.update({
@@ -82,7 +118,40 @@ export class TaskDocumentSession<TEditorView = unknown> {
   }
 
   edit(draft: string) {
+    if (draft === this.state.base?.contents) this.persistedBase = null;
     this.update({ draft });
+  }
+
+  getPersistedDraft(): PersistedTaskDocumentDraft | null {
+    const { base, draft } = this.state;
+    if (base === null || draft === base.contents) return null;
+    const metadata = this.persistedBase ?? {
+      revision: base.revision,
+      locatorVersion: base.summary.locatorVersion,
+    };
+    return { ...metadata, contents: draft };
+  }
+
+  setPersistenceError(error: string | null) {
+    if (this.state.persistenceError !== error) this.update({ persistenceError: error });
+  }
+
+  restoreRecovery(
+    recovery: Pick<PersistedTaskDocumentDraft, "revision" | "locatorVersion" | "contents">,
+  ) {
+    const { base } = this.state;
+    if (base === null || this.activeSave !== null) return false;
+    if (recovery.contents === base.contents) {
+      this.persistedBase = null;
+      this.update({ draft: base.contents, disk: null, error: null });
+      return true;
+    }
+    this.persistedBase = { revision: recovery.revision, locatorVersion: recovery.locatorVersion };
+    const diskChanged =
+      recovery.revision !== base.revision ||
+      recovery.locatorVersion !== base.summary.locatorVersion;
+    this.update({ draft: recovery.contents, disk: diskChanged ? base : null, error: null });
+    return true;
   }
 
   setView(view: Partial<TaskDocumentView<TEditorView>>) {
@@ -113,6 +182,10 @@ export class TaskDocumentSession<TEditorView = unknown> {
     if (this.activeSave !== save) return;
     this.activeSave = null;
     ++this.generation;
+    this.persistedBase =
+      this.state.draft === save.input.contents
+        ? null
+        : { revision: document.revision, locatorVersion: document.summary.locatorVersion };
     this.update({
       base: document,
       draft: this.state.draft === save.input.contents ? document.contents : this.state.draft,
@@ -134,6 +207,9 @@ export class TaskDocumentSession<TEditorView = unknown> {
     const { base, draft, disk } = this.state;
     if (base === null || disk === null || this.activeSave !== null) return;
     ++this.generation;
+    this.persistedBase = keepDraft
+      ? { revision: disk.revision, locatorVersion: disk.summary.locatorVersion }
+      : null;
     this.update({
       recovery: { base, draft, disk, keptDraft: keepDraft },
       base: disk,

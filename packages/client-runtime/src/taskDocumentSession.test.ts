@@ -23,6 +23,56 @@ function document(contents: string, revision: string, locatorVersion = 0): OpenT
 }
 
 describe("task document sessions", () => {
+  it("restores a saved browser draft and rebases it only after an explicit conflict choice", () => {
+    const base = document("base", "a");
+    const persistedDraft = {
+      revision: base.revision,
+      locatorVersion: base.summary.locatorVersion,
+      contents: "my draft",
+    };
+    const session = new TaskDocumentSession(persistedDraft);
+    session.acceptRead(session.beginRead(), base);
+    expect(session.getSnapshot()).toMatchObject({ base, draft: "my draft", disk: null });
+    expect(session.getPersistedDraft()).toEqual(persistedDraft);
+
+    const changedOnDisk = document("external update", "b", 1);
+    const reopened = new TaskDocumentSession(persistedDraft);
+    reopened.acceptRead(reopened.beginRead(), changedOnDisk);
+    expect(reopened.getSnapshot()).toMatchObject({
+      base: changedOnDisk,
+      draft: "my draft",
+      disk: changedOnDisk,
+    });
+
+    reopened.keepDraft();
+    expect(reopened.getPersistedDraft()).toEqual({
+      revision: changedOnDisk.revision,
+      locatorVersion: changedOnDisk.summary.locatorVersion,
+      contents: "my draft",
+    });
+    const discarded = new TaskDocumentSession(persistedDraft);
+    discarded.acceptRead(discarded.beginRead(), changedOnDisk);
+    discarded.reloadDisk();
+    expect(discarded.getPersistedDraft()).toBeNull();
+  });
+
+  it("restores a server recovery draft without overwriting a newer document", () => {
+    const current = document("current disk", "b", 1);
+    const session = new TaskDocumentSession();
+    session.acceptRead(session.beginRead(), current);
+    session.restoreRecovery({
+      revision: document("old base", "a").revision,
+      locatorVersion: 0,
+      contents: "server recovery draft",
+    });
+    expect(session.getSnapshot()).toMatchObject({
+      base: current,
+      draft: "server recovery draft",
+      disk: current,
+    });
+    expect(session.beginSave()).toBeNull();
+  });
+
   it("refreshes clean text but retains base, draft and disk across external edits and failures", () => {
     const session = new TaskDocumentSession();
     const base = document("base", "a");
